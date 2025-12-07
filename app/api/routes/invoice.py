@@ -53,7 +53,11 @@ async def extract_invoice(
 
     pipeline = InvoiceExtractionPipeline(ocr_client=ocr_client, llm_client=llm_client)
     try:
-        invoice_data = await pipeline.run(payload)
+        invoice_data = await pipeline.run(
+            payload,
+            filename=file.filename,
+            content_type=file.content_type,
+        )
     except HTTPException:
         raise
     except Exception as exc:  # pragma: no cover - passthrough for service failures

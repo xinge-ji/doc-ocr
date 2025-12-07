@@ -51,10 +51,20 @@ class PaddleVLOcrClient(BaseOcrClient):
             layout_detection_model_dir=str(self.model_dir),
         )
 
-    async def extract(self, source: str | bytes) -> OcrResult:
+    async def extract(
+        self,
+        source: str | bytes,
+        *,
+        filename: str | None = None,
+        content_type: str | None = None,
+    ) -> OcrResult:
         """Run OCR on a path/URL or raw bytes and return normalized OCR results."""
 
-        path, cleanup = self._prepare_source(source)
+        path, cleanup = self._prepare_source(
+            source,
+            filename=filename,
+            content_type=content_type,
+        )
         try:
             loop = asyncio.get_running_loop()
             raw_output = await loop.run_in_executor(None, lambda: self._pipeline.predict(path))
@@ -66,13 +76,20 @@ class PaddleVLOcrClient(BaseOcrClient):
         items = self._to_ocr_items(raw_output)
         return OcrResult(items=items)
 
-    def _prepare_source(self, source: str | bytes) -> tuple[str, Callable[[], None]]:
+    def _prepare_source(
+        self,
+        source: str | bytes,
+        *,
+        filename: str | None = None,
+        content_type: str | None = None,
+    ) -> tuple[str, Callable[[], None]]:
         """Normalize input into a filesystem path PaddleOCRVL can consume."""
 
         if isinstance(source, str):
             return source, lambda: None
 
-        temp_file = NamedTemporaryFile(delete=False, suffix=".bin")
+        suffix = self._infer_suffix(filename=filename, content_type=content_type)
+        temp_file = NamedTemporaryFile(delete=False, suffix=suffix)
         temp_file.write(source)
         temp_file.flush()
         temp_file.close()
@@ -81,6 +98,28 @@ class PaddleVLOcrClient(BaseOcrClient):
             Path(temp_file.name).unlink(missing_ok=True)
 
         return temp_file.name, _cleanup
+
+    def _infer_suffix(self, *, filename: str | None, content_type: str | None) -> str:
+        """Pick an extension acceptable by PaddleOCRVL."""
+
+        if filename:
+            suffix = Path(filename).suffix
+            if suffix:
+                return suffix
+
+        content_type_map = {
+            "image/jpeg": ".jpg",
+            "image/jpg": ".jpg",
+            "image/png": ".png",
+            "image/bmp": ".bmp",
+            "application/pdf": ".pdf",
+        }
+        if content_type:
+            mapped = content_type_map.get(content_type.lower())
+            if mapped:
+                return mapped
+
+        return ".jpg"
 
     def _to_ocr_items(self, raw_output: Sequence[Any]) -> list[OcrItem]:
         """Convert PaddleOCRVL prediction output into OcrItem list."""

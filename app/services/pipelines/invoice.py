@@ -31,10 +31,20 @@ class InvoiceExtractionPipeline:
         self.system_prompt = prompt_loader("invoice_extraction_system")
         self.user_prompt_template = prompt_loader("invoice_extraction_user")
 
-    async def run(self, source: str | bytes) -> InvoiceData:
+    async def run(
+        self,
+        source: str | bytes,
+        *,
+        filename: str | None = None,
+        content_type: str | None = None,
+    ) -> InvoiceData:
         """Execute OCR then LLM to produce structured invoice data."""
 
-        ocr_result = await self.ocr_client.extract(source)
+        ocr_result = await self.ocr_client.extract(
+            source,
+            filename=filename,
+            content_type=content_type,
+        )
         system_prompt, user_prompt = self._build_prompts(ocr_result)
 
         llm_payload = await self.llm_client.generate_structured(

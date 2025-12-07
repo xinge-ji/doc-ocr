@@ -18,9 +18,10 @@ class OpenAIClient(BaseLLMClient):
     def __init__(self, client: AsyncOpenAI | None = None) -> None:
         """Create an async OpenAI client using environment-driven configuration."""
 
+        base_url = self._normalize_base_url(settings.llm_base_url)
         self._client = client or AsyncOpenAI(
             api_key=settings.llm_api_key,
-            base_url=settings.llm_base_url,
+            base_url=base_url,
         )
 
     async def generate_structured(self, prompt: str, **kwargs: Any) -> dict[str, Any]:
@@ -60,3 +61,15 @@ class OpenAIClient(BaseLLMClient):
             return json.loads(cleaned_content)
         except json.JSONDecodeError as exc:  # pragma: no cover - defensive guard
             raise ValueError("LLM response is not valid JSON") from exc
+
+    def _normalize_base_url(self, base_url: str) -> str:
+        """Avoid duplicate /chat/completions suffixes when users pass full endpoints."""
+
+        normalized = base_url.rstrip("/")
+        lowered = normalized.lower()
+        for suffix in ("/chat/completions", "/v1/chat/completions", "/v4/chat/completions"):
+            if lowered.endswith(suffix):
+                trimmed = normalized[: -len(suffix)]
+                logger.warning("Stripped trailing %s from llm_base_url", suffix)
+                return trimmed
+        return normalized
