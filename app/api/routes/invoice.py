@@ -24,9 +24,9 @@ ALLOWED_CONTENT_TYPES: Final[set[str]] = {
     response_model=ExtractionResponse,
 )
 async def extract_invoice(
-    file: UploadFile = File(..., description="Invoice image or PDF"),
     ocr_client: OCRClientDep,
     llm_client: LLMClientDep,
+    file: UploadFile = File(..., description="Invoice image or PDF"),
 ) -> ExtractionResponse:
     """Run the hybrid invoice extraction pipeline on an uploaded file."""
 
