@@ -1,6 +1,6 @@
-from datetime import date
 import re
-from typing import Optional
+from datetime import date
+from typing import Any, Optional, Union
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -175,8 +175,8 @@ class InvoiceData(BaseModel):
         ...,
         description="Selling party information block.",
     )
-    issue_date: date = Field(
-        ...,
+    issue_date: Union[date, str, None] = Field(
+        default=None,
         description="Invoice issue date.",
     )
     issuer: str = Field(
@@ -213,6 +213,17 @@ class InvoiceData(BaseModel):
         parsed = _parse_float_like(value, allow_none=False)
         assert parsed is not None
         return parsed
+
+    @field_validator("issue_date", mode="before")
+    @classmethod
+    def _parse_issue_date(cls, value: Any) -> Any:
+        if not value:
+            return None
+        if isinstance(value, str):
+            # 处理空字符串、None字符串
+            if not value.strip() or value.lower() in ("null", "none"):
+                return None
+        return value
 
 
 class ExtractionResponse(BaseModel):
