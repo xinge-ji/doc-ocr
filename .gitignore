@@ -1,0 +1,15 @@
+.DS_Store
+/.env
+/.venv
+/.idea
+/.vscode
+/.cursor
+.pytest_cache
+.mypy_cache
+**/__pycache__
+/data
+/output*
+/logs
+/.history
+/dist
+*.egg-info
