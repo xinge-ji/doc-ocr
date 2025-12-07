@@ -68,6 +68,11 @@ class PaddleVLOcrClient(BaseOcrClient):
         try:
             loop = asyncio.get_running_loop()
             raw_output = await loop.run_in_executor(None, lambda: self._pipeline.predict(path))
+            logger.info(
+                "PaddleOCRVL predict returned %d page(s) for source=%s",
+                len(raw_output) if raw_output is not None else -1,
+                filename or path,
+            )
         except Exception as exc:  # pragma: no cover - passthrough for service errors
             raise RuntimeError("PaddleOCRVL prediction failed") from exc
         finally:
@@ -159,10 +164,42 @@ class PaddleVLOcrClient(BaseOcrClient):
     def _valid_bbox(self, bbox: Any) -> bool:
         """Validate bbox shape matches [x1, y1, x2, y2]."""
 
-        return isinstance(bbox, (list, tuple)) and len(bbox) == 4
+        if not isinstance(bbox, (list, tuple)):
+            return False
+        if len(bbox) == 4:
+            return True
+        if len(bbox) == 8:
+            return True
+        # list of 4 corner points e.g. [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
+        if len(bbox) == 4 and all(isinstance(pt, (list, tuple)) and len(pt) == 2 for pt in bbox):
+            return True
+        return False
 
-    def _to_bounding_box(self, bbox: Sequence[float]) -> BoundingBox:
-        """Convert PaddleOCRVL rectangular bbox to a compact XYXY bounding box."""
+    def _to_bounding_box(self, bbox: Sequence[Any]) -> BoundingBox:
+        """Convert PaddleOCRVL bbox (rect or quad) to a compact XYXY bounding box."""
 
-        x1, y1, x2, y2 = bbox
+        x1, y1, x2, y2 = self._normalize_bbox(bbox)
         return BoundingBox(x1=x1, y1=y1, x2=x2, y2=y2)
+
+    def _normalize_bbox(self, bbox: Sequence[Any]) -> tuple[float, float, float, float]:
+        """Flatten various bbox formats to (x1, y1, x2, y2)."""
+
+        # Flat [x1, y1, x2, y2]
+        if len(bbox) == 4 and all(isinstance(val, (int, float)) for val in bbox):
+            x1, y1, x2, y2 = bbox
+            return float(x1), float(y1), float(x2), float(y2)
+
+        # Flat [x1, y1, x2, y2, x3, y3, x4, y4]
+        if len(bbox) == 8 and all(isinstance(val, (int, float)) for val in bbox):
+            xs = bbox[0::2]
+            ys = bbox[1::2]
+            return float(min(xs)), float(min(ys)), float(max(xs)), float(max(ys))
+
+        # Nested [[x1, y1], [x2, y2], [x3, y3], [x4, y4]]
+        if len(bbox) == 4 and all(isinstance(pt, (list, tuple)) and len(pt) == 2 for pt in bbox):
+            xs = [float(pt[0]) for pt in bbox]
+            ys = [float(pt[1]) for pt in bbox]
+            return min(xs), min(ys), max(xs), max(ys)
+
+        # Fallback to zeros if unexpected shape (should be filtered out earlier)
+        return 0.0, 0.0, 0.0, 0.0
