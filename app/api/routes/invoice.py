@@ -1,7 +1,7 @@
 import logging
 from typing import Final
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, File, HTTPException, UploadFile, status
 
 from app.api.deps import LLMClientDep, OCRClientDep
 from app.schemas.invoice import ExtractionResponse
@@ -25,8 +25,8 @@ ALLOWED_CONTENT_TYPES: Final[set[str]] = {
 )
 async def extract_invoice(
     file: UploadFile = File(..., description="Invoice image or PDF"),
-    ocr_client: OCRClientDep = Depends(),
-    llm_client: LLMClientDep = Depends(),
+    ocr_client: OCRClientDep,
+    llm_client: LLMClientDep,
 ) -> ExtractionResponse:
     """Run the hybrid invoice extraction pipeline on an uploaded file."""
 
