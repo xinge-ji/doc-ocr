@@ -1,9 +1,11 @@
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
 from app.api.routes.health import router as health_router
 from app.api.routes.invoice import router as invoice_router
 
-from contextlib import asynccontextmanager
 from app.core.config import settings
 from app.services.ocr.paddle_vl import PaddleVLOcrClient
 from app.services.llm.openai_client import OpenAIClient
@@ -21,6 +23,11 @@ async def lifespan(app: FastAPI):
     # Shutdown
     print("Shutting down...")
 
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 
 app = FastAPI(title="Doc OCR Service", lifespan=lifespan)
 
