@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any, Callable, Sequence
 
 from paddleocr import PaddleOCRVL
 
@@ -14,7 +13,7 @@ from app.core.config import settings
 from app.schemas.ocr import BoundingBox, OcrItem, OcrResult
 from app.services.ocr.base import BaseOcrClient
 
-# 即使 logger 不打印，print 肯定会打印
+# 使用 print 确保能看到日志
 logger = logging.getLogger(__name__)
 
 
@@ -52,39 +51,42 @@ class PaddleVLOcrClient(BaseOcrClient):
         filename: str | None = None,
         content_type: str | None = None,
     ) -> OcrResult:
-        # 1. 准备文件
         path, cleanup = self._prepare_source(
             source,
             filename=filename,
             content_type=content_type,
         )
-
-        # DEBUG: 打印文件路径和大小，确保文件存在且不为空
-        file_size = os.path.getsize(path)
-        print(f"DEBUG: Processing temp file: {path}, Size: {file_size} bytes")
+        print(f"DEBUG: Processing temp file: {path}")
 
         try:
             loop = asyncio.get_running_loop()
-            # 执行预测
             raw_output = await loop.run_in_executor(None, lambda: self._pipeline.predict(path))
 
-            # --- 核心调试区 ---
-            print(f"DEBUG: Raw Output Type: {type(raw_output)}")
+            # --- 简化版：直接解析 ---
+            # PaddleOCRVL.predict 返回的是一个 list，里面每个元素对应一页
+            # 每个元素可能是一个 dict (你给的JSON情况) 或者一个对象
 
-            # 尝试把结果保存下来，就像你的脚本里做的一样
-            try:
-                if raw_output and hasattr(raw_output, "__iter__"):
-                    for i, res in enumerate(raw_output):
-                        # 尝试保存到项目根目录
-                        save_path = f"debug_api_output_{i}.json"
-                        if hasattr(res, "save_to_json"):
-                            res.save_to_json(save_path)
+            items = []
+            if raw_output:
+                for page_idx, page_data in enumerate(raw_output):
+                    # 尝试保存调试文件
+                    try:
+                        save_path = f"debug_api_output_{page_idx}.json"
+                        if hasattr(page_data, "save_to_json"):
+                            page_data.save_to_json(save_path)
                             print(f"DEBUG: Saved result to {os.path.abspath(save_path)}")
-                        else:
-                            print(f"DEBUG: Result item {i} does not have save_to_json: {res}")
-            except Exception as e:
-                print(f"DEBUG: Failed to save debug json: {e}")
-            # ----------------
+                    except Exception:
+                        pass
+
+                    # 提取 items
+                    page_items = self._parse_single_page(page_data, page_idx + 1)
+                    items.extend(page_items)
+
+            print(f"DEBUG: Total parsed items: {len(items)}")
+            if len(items) == 0:
+                print("WARNING: Parsed 0 items! Check parsing logic.")
+
+            return OcrResult(items=items)
 
         except Exception as exc:
             print(f"ERROR: Paddle execution failed: {exc}")
@@ -92,9 +94,61 @@ class PaddleVLOcrClient(BaseOcrClient):
         finally:
             cleanup()
 
-        items = self._to_ocr_items(raw_output)
-        print(f"DEBUG: Parsed items count: {len(items)}")
-        return OcrResult(items=items)
+    def _parse_single_page(self, page_data: Any, page_num: int) -> list[OcrItem]:
+        """专门适配 PaddleOCRVL 输出结构的解析器"""
+        items = []
+
+        # 1. 获取 parsing_res_list
+        # 情况A: page_data 是 dict (你的情况)
+        if isinstance(page_data, dict):
+            res_list = page_data.get("parsing_res_list")
+        # 情况B: page_data 是对象
+        else:
+            res_list = getattr(page_data, "parsing_res_list", None)
+
+        if not res_list:
+            print(f"DEBUG: Page {page_num} has no parsing_res_list")
+            return []
+
+        # 2. 遍历 block
+        for block in res_list:
+            # 兼容 block 是 dict 或 对象
+            if isinstance(block, dict):
+                label = block.get("block_label", "")
+                text = str(block.get("block_content", "")).strip()
+                bbox = block.get("block_bbox")
+                block_id = block.get("block_id")
+            else:
+                label = getattr(block, "block_label", "")
+                text = str(getattr(block, "block_content", "")).strip()
+                bbox = getattr(block, "block_bbox", None)
+                block_id = getattr(block, "block_id", None)
+
+            # 过滤逻辑：
+            # - 忽略 image, seal (通常是空的或者乱码)
+            # - 保留 table (里面有 HTML)
+            # - 保留 text, paragraph_title 等
+            if label in ("image", "seal"):
+                continue
+
+            if not text:
+                continue
+
+            if not self._valid_bbox(bbox):
+                continue
+
+            # 构造 OcrItem
+            items.append(
+                OcrItem(
+                    text=text,
+                    bounding_box=self._to_bounding_box(bbox),
+                    page=page_num,
+                    block_id=block_id,
+                    # label 也可以存，但 OcrItem 目前没定义，暂时忽略
+                )
+            )
+
+        return items
 
     def _prepare_source(
         self,
@@ -106,7 +160,13 @@ class PaddleVLOcrClient(BaseOcrClient):
         if isinstance(source, str):
             return source, lambda: None
 
-        suffix = self._infer_suffix(filename=filename, content_type=content_type)
+        # 你的图片是 .jpg，这里逻辑没问题
+        suffix = ".jpg"
+        if filename and Path(filename).suffix:
+            suffix = Path(filename).suffix
+        elif content_type == "application/pdf":
+            suffix = ".pdf"
+
         temp_file = NamedTemporaryFile(delete=False, suffix=suffix)
         temp_file.write(source)
         temp_file.flush()
@@ -117,97 +177,13 @@ class PaddleVLOcrClient(BaseOcrClient):
 
         return temp_file.name, _cleanup
 
-    def _infer_suffix(self, *, filename: str | None, content_type: str | None) -> str:
-        if filename:
-            suffix = Path(filename).suffix
-            if suffix:
-                return suffix
-        content_type_map = {
-            "image/jpeg": ".jpg",
-            "image/jpg": ".jpg",
-            "image/png": ".png",
-            "application/pdf": ".pdf",
-        }
-        if content_type:
-            mapped = content_type_map.get(content_type.lower())
-            if mapped:
-                return mapped
-        return ".jpg"
-
-    def _to_ocr_items(self, raw_output: Sequence[Any]) -> list[OcrItem]:
-        """Convert PaddleOCRVL prediction output into OcrItem list."""
-        items: list[OcrItem] = []
-
-        # 如果 raw_output 是 None 或空
-        if not raw_output:
-            print("DEBUG: raw_output is empty or None")
-            return []
-
-        for page_idx, page in enumerate(raw_output):
-            # PaddleOCRVL 的 output 元素通常是一个对象，内部存了 parsing_res_list
-            # 我们先打印看看这个 page 到底有什么属性
-            # print(f"DEBUG: Inspecting Page {page_idx}: {dir(page)}")
-
-            parsing_res_list = getattr(page, "parsing_res_list", None)
-            if parsing_res_list is None and isinstance(page, dict):
-                parsing_res_list = page.get("parsing_res_list")
-
-            if not parsing_res_list:
-                print(f"DEBUG: Page {page_idx} has no parsing_res_list")
-                continue
-
-            for block in parsing_res_list:
-                # 兼容 block 可能是对象也可能是 dict
-                if isinstance(block, dict):
-                    text = str(block.get("block_content", "")).strip()
-                    bbox = block.get("block_bbox")
-                    block_id = block.get("block_id")
-                    line_id = block.get("block_order")
-                else:
-                    # 假如是对象
-                    text = str(getattr(block, "block_content", "")).strip()
-                    bbox = getattr(block, "block_bbox", None)
-                    block_id = getattr(block, "block_id", None)
-                    line_id = getattr(block, "block_order", None)
-
-                if not text or not self._valid_bbox(bbox):
-                    continue
-
-                items.append(
-                    OcrItem(
-                        text=text,
-                        bounding_box=self._to_bounding_box(bbox),
-                        page=page_idx + 1,
-                        block_id=block_id,
-                        line_id=line_id,
-                    )
-                )
-        return items
-
-    def _iter_blocks(self, raw_output: Sequence[Any]) -> Iterable[tuple[int, dict[str, Any]]]:
-        # 这个方法暂时弃用，逻辑已合并到 _to_ocr_items 以方便调试
-        pass
-
     def _valid_bbox(self, bbox: Any) -> bool:
         if not isinstance(bbox, (list, tuple)):
             return False
-        # 简单检查
-        return len(bbox) in (4, 8)
+        # [x1, y1, x2, y2]
+        return len(bbox) == 4
 
     def _to_bounding_box(self, bbox: Sequence[Any]) -> BoundingBox:
-        x1, y1, x2, y2 = self._normalize_bbox(bbox)
-        return BoundingBox(x1=x1, y1=y1, x2=x2, y2=y2)
-
-    def _normalize_bbox(self, bbox: Sequence[Any]) -> tuple[float, float, float, float]:
-        if len(bbox) == 4 and all(isinstance(val, (int, float)) for val in bbox):
-            x1, y1, x2, y2 = bbox
-            return float(x1), float(y1), float(x2), float(y2)
-        if len(bbox) == 8:
-            xs = bbox[0::2]
-            ys = bbox[1::2]
-            return float(min(xs)), float(min(ys)), float(max(xs)), float(max(ys))
-        if len(bbox) == 4:
-            xs = [float(pt[0]) for pt in bbox]
-            ys = [float(pt[1]) for pt in bbox]
-            return min(xs), min(ys), max(xs), max(ys)
-        return 0.0, 0.0, 0.0, 0.0
+        # 你的 JSON 里 bbox 就是 [x1, y1, x2, y2]
+        x1, y1, x2, y2 = bbox
+        return BoundingBox(x1=float(x1), y1=float(y1), x2=float(x2), y2=float(y2))
