@@ -43,6 +43,11 @@ def setup_logging():
     # 添加新的 handlers
     root_logger.addHandler(file_handler)
     root_logger.addHandler(console_handler)
+    
+    app_logger = logging.getLogger("app")
+    app_logger.setLevel(logging.INFO)
+    app_logger.handlers = [file_handler, console_handler]
+    app_logger.propagate = False
 
     # 6. 强制接管 Uvicorn 的日志
     # 这样 Uvicorn 的请求日志也会写到我们的文件里
