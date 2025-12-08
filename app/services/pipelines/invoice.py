@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time  # <--- 新增
 from typing import Any, Callable
 
 from pydantic import ValidationError
@@ -40,21 +41,51 @@ class InvoiceExtractionPipeline:
     ) -> InvoiceData:
         """Execute OCR then LLM to produce structured invoice data."""
 
+        start_time = time.perf_counter()
+        logger.info(f"🚀 [TIMER] Pipeline started for file: {filename}")
+
+        # --- Phase 1: OCR ---
+        t0 = time.perf_counter()
+        logger.info("🕒 [TIMER] Step 1: Starting OCR extraction...")
+
         ocr_result = await self.ocr_client.extract(
             source,
             filename=filename,
             content_type=content_type,
         )
+
+        t1 = time.perf_counter()
+        ocr_duration = t1 - t0
+        logger.info(f"✅ [TIMER] Step 1: OCR finished. Duration: {ocr_duration:.4f}s")
+        # --------------------
+
+        # --- Phase 2: Build Prompt ---
         system_prompt, user_prompt = self._build_prompts(ocr_result)
+
+        # --- Phase 3: LLM ---
+        t2 = time.perf_counter()
+        logger.info("🕒 [TIMER] Step 2: Sending request to LLM...")
 
         llm_payload = await self.llm_client.generate_structured(
             prompt=user_prompt,
             system_prompt=system_prompt,
             temperature=0,
         )
+
+        t3 = time.perf_counter()
+        llm_duration = t3 - t2
+        logger.info(f"✅ [TIMER] Step 2: LLM finished. Duration: {llm_duration:.4f}s")
+        # --------------------
+
+        total_duration = time.perf_counter() - start_time
+        logger.info(
+            f"🏁 [TIMER] Pipeline completed. Total: {total_duration:.4f}s (OCR: {ocr_duration:.2f}s, LLM: {llm_duration:.2f}s)"
+        )
+
         try:
             return InvoiceData.model_validate(llm_payload)
         except ValidationError as exc:  # pragma: no cover - runtime validation guard
+            logger.error(f"❌ [TIMER] Validation failed after {total_duration:.2f}s")
             raise ValueError("LLM response failed invoice schema validation") from exc
 
     def _build_prompts(self, ocr_result: OcrResult) -> tuple[str, str]:
