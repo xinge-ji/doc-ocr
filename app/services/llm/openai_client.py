@@ -48,6 +48,7 @@ class OpenAIClient(BaseLLMClient):
         )
 
         content = completion.choices[0].message.content
+        logger.debug(f"LLM return: {content}")
         if not content:
             raise ValueError("LLM returned empty content")
 
