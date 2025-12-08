@@ -36,7 +36,7 @@ class PaddleVLOcrClient(BaseOcrClient):
         self._pipeline = pipeline or self._build_pipeline()
 
     def _build_pipeline(self) -> PaddleOCRVL:
-        print(f"--- INIT PADDLE: {self.server_url} ---")
+        logger.info(f"--- INIT PADDLE: {self.server_url} ---")
         return PaddleOCRVL(
             vl_rec_backend=self.backend,
             vl_rec_server_url=self.server_url,
@@ -56,7 +56,7 @@ class PaddleVLOcrClient(BaseOcrClient):
             filename=filename,
             content_type=content_type,
         )
-        print(f"DEBUG: Processing temp file: {path}")
+        logger.info(f"DEBUG: Processing temp file: {path}")
 
         try:
             loop = asyncio.get_running_loop()
@@ -79,26 +79,26 @@ class PaddleVLOcrClient(BaseOcrClient):
                             with open(json_temp_name, "r", encoding="utf-8") as f:
                                 page_dict = json.load(f)
 
-                            print(f"DEBUG: Successfully re-loaded JSON for page {page_idx}")
+                            logger.info(f"DEBUG: Successfully re-loaded JSON for page {page_idx}")
 
                             # 3. 解析 Dict
                             page_items = self._parse_single_page_dict(page_dict, page_idx + 1)
                             items.extend(page_items)
                         else:
-                            print(f"WARNING: Page object {page_idx} has no save_to_json method")
+                            logger.info(f"WARNING: Page object {page_idx} has no save_to_json method")
 
                     except Exception as e:
-                        print(f"ERROR processing page {page_idx}: {e}")
+                        logger.info(f"ERROR processing page {page_idx}: {e}")
                     finally:
                         # 清理这个临时的 JSON 文件
                         if os.path.exists(json_temp_name):
                             os.remove(json_temp_name)
 
-            print(f"DEBUG: Total parsed items: {len(items)}")
+            logger.info(f"DEBUG: Total parsed items: {len(items)}")
             return OcrResult(items=items)
 
         except Exception as exc:
-            print(f"ERROR: Paddle execution failed: {exc}")
+            logger.info(f"ERROR: Paddle execution failed: {exc}")
             raise RuntimeError("PaddleOCRVL prediction failed") from exc
         finally:
             cleanup()
@@ -109,7 +109,7 @@ class PaddleVLOcrClient(BaseOcrClient):
         res_list = page_data.get("parsing_res_list", [])
 
         if not res_list:
-            print(f"DEBUG: Page {page_num} has empty parsing_res_list")
+            logger.info(f"DEBUG: Page {page_num} has empty parsing_res_list")
             return []
 
         for block in res_list:
