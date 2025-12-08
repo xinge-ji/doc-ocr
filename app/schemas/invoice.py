@@ -124,10 +124,10 @@ class InvoiceLine(BaseModel):
         ge=0,
         description="金额",
     )
-    tax_rate: float | str | None = Field(
+    tax_rate: int | float | str | None = Field(
         default=None,
         ge=0,
-        description="税率 as a decimal (e.g., 0.13 for 13%).",
+        description="税率 as a decimal (e.g., 13 for 13%).",
     )
     tax_amount: float | str | None = Field(
         default=None,

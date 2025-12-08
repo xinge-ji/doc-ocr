@@ -39,7 +39,7 @@ class OpenAIClient(BaseLLMClient):
 
         response_format = kwargs.pop("response_format", {"type": "json_object"})
 
-        logger.debug("Calling LLM model=%s with %d messages", model, len(messages))
+        logger.debug(f"Calling LLM model={model} with {messages} messages")
         completion = await self._client.chat.completions.create(
             model=model,
             messages=messages,

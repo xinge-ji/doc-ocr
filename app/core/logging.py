@@ -2,6 +2,7 @@ import logging
 import sys
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
+from app.core.config import settings
 
 # 定义日志目录和文件
 LOG_DIR = Path("logs")
@@ -13,6 +14,7 @@ def setup_logging():
 
     # 1. 确保日志目录存在
     LOG_DIR.mkdir(exist_ok=True)
+    level = getattr(logging, settings.log_level.upper(), logging.INFO)
 
     # 2. 定义格式
     # 格式：时间 | 级别 | 模块名:行号 | 内容
@@ -26,16 +28,16 @@ def setup_logging():
         encoding="utf-8",
     )
     file_handler.setFormatter(log_format)
-    file_handler.setLevel(logging.INFO)
+    file_handler.setLevel(level)
 
     # 4. 控制台处理器 (Console Handler) - 输出到屏幕/nohup
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(log_format)
-    console_handler.setLevel(logging.INFO)
+    console_handler.setLevel(level)
 
     # 5. 配置根记录器 (Root Logger)
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO)
+    root_logger.setLevel(level)
 
     # 清除旧的 handlers (避免重复打印)
     root_logger.handlers = []
@@ -45,7 +47,7 @@ def setup_logging():
     root_logger.addHandler(console_handler)
     
     app_logger = logging.getLogger("app")
-    app_logger.setLevel(logging.INFO)
+    app_logger.setLevel(level)
     app_logger.handlers = [file_handler, console_handler]
     app_logger.propagate = False
 
