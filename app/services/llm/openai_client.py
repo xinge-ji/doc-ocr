@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 from typing import Any
 
 from openai import AsyncOpenAI
 
-from app.core.config import settings
+from app.core.config import LlmNode, settings
 from app.services.llm.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
@@ -15,19 +16,27 @@ logger = logging.getLogger(__name__)
 class OpenAIClient(BaseLLMClient):
     """LLM client built on the OpenAI SDK for structured JSON responses."""
 
-    def __init__(self, client: AsyncOpenAI | None = None) -> None:
-        """Create an async OpenAI client using environment-driven configuration."""
+    def __init__(self, nodes: list[LlmNode] | None = None) -> None:
+        """Create async OpenAI clients for configured LLM nodes."""
 
-        base_url = self._normalize_base_url(settings.llm_base_url)
-        self._client = client or AsyncOpenAI(
-            api_key=settings.llm_api_key,
-            base_url=base_url,
-        )
+        self._nodes = nodes or settings.llm_nodes
+        self._clients: dict[str, AsyncOpenAI] = {}
+
+        for node in self._nodes:
+            base_url = self._normalize_base_url(node.base_url)
+            self._clients[node.name] = AsyncOpenAI(
+                api_key=node.api_key,
+                base_url=base_url,
+            )
 
     async def generate_structured(self, prompt: str, **kwargs: Any) -> dict[str, Any]:
-        """Invoke chat.completions with JSON-mode and return parsed content."""
+        """Invoke chat.completions on a selected node and return parsed content."""
 
-        model = kwargs.pop("model", settings.llm_model_name)
+        node_name: str | None = kwargs.pop("node_name", None)
+        node = self._pick_node(node_name)
+        client = self._clients[node.name]
+
+        model = kwargs.pop("model", node.model)
         system_prompt = kwargs.pop("system_prompt", None)
         messages = kwargs.pop("messages", None)
 
@@ -39,8 +48,8 @@ class OpenAIClient(BaseLLMClient):
 
         response_format = kwargs.pop("response_format", {"type": "json_object"})
 
-        logger.debug(f"Calling LLM model={model} with {messages} messages")
-        completion = await self._client.chat.completions.create(
+        logger.debug("Calling LLM node=%s model=%s with %d messages", node.name, model, len(messages))
+        completion = await client.chat.completions.create(
             model=model,
             messages=messages,
             response_format=response_format,
@@ -48,7 +57,7 @@ class OpenAIClient(BaseLLMClient):
         )
 
         content = completion.choices[0].message.content
-        logger.debug(f"LLM return: {content}")
+        logger.debug("LLM node=%s return: %s", node.name, content)
         if not content:
             raise ValueError("LLM returned empty content")
 
@@ -56,12 +65,25 @@ class OpenAIClient(BaseLLMClient):
         cleaned_content = content.strip()
         if cleaned_content.startswith("```"):
             import re
+
             cleaned_content = re.sub(r"^```(json)?|```$", "", cleaned_content, flags=re.MULTILINE | re.DOTALL).strip()
-    
+
         try:
             return json.loads(cleaned_content)
         except json.JSONDecodeError as exc:  # pragma: no cover - defensive guard
             raise ValueError("LLM response is not valid JSON") from exc
+
+    def _pick_node(self, node_name: str | None) -> LlmNode:
+        """Pick a node by name or randomly when unspecified."""
+
+        if node_name:
+            key = node_name.strip().lower()
+            for node in self._nodes:
+                if node.name == key:
+                    return node
+            raise ValueError(f"LLM node not found: {node_name}")
+
+        return random.choice(self._nodes)
 
     def _normalize_base_url(self, base_url: str) -> str:
         """Avoid duplicate /chat/completions suffixes when users pass full endpoints."""

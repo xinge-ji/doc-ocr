@@ -1,7 +1,7 @@
 import logging
 from typing import Final
 
-from fastapi import APIRouter, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 
 from app.api.deps import LLMClientDep, OCRClientDep
 from app.schemas.invoice import ExtractionResponse
@@ -26,6 +26,7 @@ ALLOWED_CONTENT_TYPES: Final[set[str]] = {
 async def extract_invoice(
     ocr_client: OCRClientDep,
     llm_client: LLMClientDep,
+    llm_node: str | None = Query(default=None, description="Target LLM node name; leave empty for random"),
     file: UploadFile = File(..., description="Invoice image or PDF"),
 ) -> ExtractionResponse:
     """Run the hybrid invoice extraction pipeline on an uploaded file."""
@@ -57,7 +58,13 @@ async def extract_invoice(
             payload,
             filename=file.filename,
             content_type=file.content_type,
+            llm_node=llm_node,
         )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
     except HTTPException:
         raise
     except Exception as exc:  # pragma: no cover - passthrough for service failures

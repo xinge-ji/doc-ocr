@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-import time  # <--- 新增
+import time
 from typing import Any, Callable
 
 from pydantic import ValidationError
@@ -38,6 +38,7 @@ class InvoiceExtractionPipeline:
         *,
         filename: str | None = None,
         content_type: str | None = None,
+        llm_node: str | None = None,
     ) -> InvoiceData:
         """Execute OCR then LLM to produce structured invoice data."""
 
@@ -70,6 +71,7 @@ class InvoiceExtractionPipeline:
             prompt=user_prompt,
             system_prompt=system_prompt,
             temperature=0,
+            node_name=llm_node,
         )
 
         t3 = time.perf_counter()

@@ -21,4 +21,14 @@ uv run uvicorn app.main:app --reload
 ```bash
 uv run pytest
 # curl -s -X POST "http://127.0.0.1:8080/api/invoice/extract"   -F "file=@/home/pZnuvhq.jpg"   | python3 -c "import sys, json; print(json.dumps(json.load(sys.stdin), indent=2, ensure_ascii=False))"
+
+# Random LLM node
+curl -s -X POST "http://127.0.0.1:8080/api/invoice/extract" \
+  -F "file=@/path/to/invoice.jpg" \
+  | python3 -c "import sys, json; print(json.dumps(json.load(sys.stdin), indent=2, ensure_ascii=False))"
+
+# Specify LLM node
+curl -s -X POST "http://127.0.0.1:8080/api/invoice/extract?llm_node=primary" \
+  -F "file=@/path/to/invoice.jpg" \
+  | python3 -c "import sys, json; print(json.dumps(json.load(sys.stdin), indent=2, ensure_ascii=False))"
 ```
