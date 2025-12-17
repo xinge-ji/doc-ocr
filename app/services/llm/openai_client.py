@@ -56,8 +56,9 @@ class OpenAIClient(BaseLLMClient):
             **kwargs,
         )
 
+        logger.debug(f"LLM node={node.name} return: {completion}")
         content = completion.choices[0].message.content
-        logger.debug("LLM node=%s return: %s", node.name, content)
+
         if not content:
             raise ValueError("LLM returned empty content")
 
