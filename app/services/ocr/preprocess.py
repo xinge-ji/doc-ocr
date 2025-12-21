@@ -27,16 +27,19 @@ class OcrPreprocessor:
         use_doc_orientation: bool = True,
         use_doc_unwarping: bool = True,
         use_basic_enhance: bool = True,
+        device: str | None = None,
     ) -> None:
         self.use_doc_orientation = use_doc_orientation
         self.use_doc_unwarping = use_doc_unwarping
         self.use_basic_enhance = use_basic_enhance and cv2 is not None
+        self.device = device
 
         self._docpp = None
         if self.use_doc_orientation or self.use_doc_unwarping:
             self._docpp = DocPreprocessor(
                 use_doc_orientation_classify=self.use_doc_orientation,
                 use_doc_unwarping=self.use_doc_unwarping,
+                device=self.device,
             )
 
     def process(self, path: str) -> tuple[list[str], Callable[[], None]]:
@@ -125,21 +128,37 @@ class OcrPreprocessor:
             return list(paths), lambda: None
 
     def _enhance_image(self, image: np.ndarray) -> np.ndarray:
-        """简单增强：轻降噪 + CLAHE + 自适应阈值。"""
+        """自适应预处理：自适应直方图 + 非局部均值去噪 + 柔性阈值。"""
 
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        blur = cv2.GaussianBlur(gray, (3, 3), 0)
+        # 彩色/灰度分支：彩色用去噪保边，灰度走轻量分支
+        is_color = image.ndim == 3 and image.shape[2] == 3
+        if is_color:
+            # 自适应直方图提升对比度
+            lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+            l, a, b = cv2.split(lab)
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            cl = clahe.apply(l)
+            merged = cv2.merge((cl, a, b))
+            image = cv2.cvtColor(merged, cv2.COLOR_LAB2BGR)
 
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        clahe_img = clahe.apply(blur)
+            # 非局部均值去噪（彩色）
+            image = cv2.fastNlMeansDenoisingColored(image, None, h=5, hColor=5, templateWindowSize=7, searchWindowSize=21)
+        else:
+            gray = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            gray = cv2.equalizeHist(gray)
+            gray = cv2.fastNlMeansDenoising(gray, None, h=7, templateWindowSize=7, searchWindowSize=21)
+            image = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
 
+        # 转灰度后做柔性阈值（减轻噪点带来的斑块）
+        gray_final = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        blur = cv2.medianBlur(gray_final, 3)
         thresh = cv2.adaptiveThreshold(
-            clahe_img,
+            blur,
             255,
             cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
             cv2.THRESH_BINARY,
-            11,
-            2,
+            15,
+            5,
         )
 
         return cv2.cvtColor(thresh, cv2.COLOR_GRAY2BGR)
