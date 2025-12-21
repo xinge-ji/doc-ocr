@@ -42,6 +42,7 @@ class PaddleVLOcrClient(BaseOcrClient):
             vl_rec_server_url=self.server_url,
             layout_detection_model_name=self.layout_model_name,
             layout_detection_model_dir=str(self.model_dir),
+            use_doc_orientation_classify=True,
         )
 
     async def extract(
