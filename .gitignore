@@ -13,3 +13,6 @@
 /.history
 /dist
 *.egg-info
+*.log
+.env*
+
