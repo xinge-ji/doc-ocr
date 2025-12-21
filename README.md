@@ -16,13 +16,6 @@ uv run uvicorn app.main:app --reload
 # nohup uv run uvicorn app.main:app --host 0.0.0.0 --port 8080 --log-level info > app.log 2>&1 &
 ```
 
-### OCR 前处理
-
-- 默认开启文档方向分类 + 去扭曲（Paddle DocPreprocessor）+ 基础图像增强。
-- 通过环境变量控制：`OCR_USE_DOC_ORIENTATION`, `OCR_USE_DOC_UNWARPING`, `OCR_USE_BASIC_ENHANCE`。
-- Debug：`OCR_DEBUG_SAVE_BASE64=true` 时，会将送入 OCR 的预处理后图片以 base64 形式落盘到 `OCR_DEBUG_SAVE_DIR`（默认 `debug/ocr/{timestamp}/page_*.b64`），请注意磁盘占用。
-- 设备：`OCR_DEVICE=gpu` 默认用 GPU，传 `cpu` 可强制 CPU。
-
 ## Test
 
 ```bash

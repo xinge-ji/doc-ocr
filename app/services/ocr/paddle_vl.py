@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import logging
 import os
@@ -9,13 +8,11 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any, Callable, Sequence
 
-from datetime import datetime
 from paddleocr import PaddleOCRVL
 
 from app.core.config import settings
 from app.schemas.ocr import BoundingBox, OcrItem, OcrResult
 from app.services.ocr.base import BaseOcrClient
-from app.services.ocr.preprocess import OcrPreprocessor
 
 logger = logging.getLogger(__name__)
 
@@ -31,20 +28,12 @@ class PaddleVLOcrClient(BaseOcrClient):
         server_url: str | None = None,
         layout_model_name: str | None = None,
         pipeline: PaddleOCRVL | None = None,
-        preprocessor: OcrPreprocessor | None = None,
-        debug_save_base64: bool | None = None,
-        debug_save_dir: str | Path | None = None,
     ) -> None:
         self.model_dir = Path(model_dir or settings.doclayout_model_path)
         self.backend = backend or settings.ocr_vl_rec_backend
         self.server_url = server_url or settings.ocr_vl_rec_server_url
         self.layout_model_name = layout_model_name or settings.ocr_layout_model_name
         self._pipeline = pipeline or self._build_pipeline()
-        self._preprocessor = preprocessor or self._build_preprocessor()
-        self.debug_save_base64 = (
-            settings.ocr_debug_save_base64 if debug_save_base64 is None else debug_save_base64
-        )
-        self.debug_save_dir = Path(debug_save_dir or settings.ocr_debug_save_dir)
 
     def _build_pipeline(self) -> PaddleOCRVL:
         logger.info(f"--- INIT PADDLE: {self.server_url} ---")
@@ -55,13 +44,6 @@ class PaddleVLOcrClient(BaseOcrClient):
             layout_detection_model_dir=str(self.model_dir),
         )
 
-    def _build_preprocessor(self) -> OcrPreprocessor:
-        return OcrPreprocessor(
-            use_doc_orientation=settings.ocr_use_doc_orientation,
-            use_doc_unwarping=settings.ocr_use_doc_unwarping,
-            use_basic_enhance=settings.ocr_use_basic_enhance,
-        )
-
     async def extract(
         self,
         source: str | bytes,
@@ -69,30 +51,16 @@ class PaddleVLOcrClient(BaseOcrClient):
         filename: str | None = None,
         content_type: str | None = None,
     ) -> OcrResult:
-        path, base_cleanup = self._prepare_source(
+        path, cleanup = self._prepare_source(
             source,
             filename=filename,
             content_type=content_type,
         )
         logger.info(f"DEBUG: Processing temp file: {path}")
 
-        preprocess_paths, preprocess_cleanup = self._preprocess(path)
-        cleanup = self._compose_cleanups([preprocess_cleanup, base_cleanup])
-
         try:
             loop = asyncio.get_running_loop()
-            predict_input: str | list[str]
-            if isinstance(preprocess_paths, list) and len(preprocess_paths) == 1:
-                predict_input = preprocess_paths[0]
-            else:
-                predict_input = preprocess_paths
-
-            if self.debug_save_base64 and preprocess_paths:
-                self._save_debug_images(preprocess_paths, filename)
-
-            raw_output = await loop.run_in_executor(
-                None, lambda: self._pipeline.predict(predict_input)
-            )
+            raw_output = await loop.run_in_executor(None, lambda: self._pipeline.predict(path))
 
             items = []
             if raw_output:
@@ -199,42 +167,6 @@ class PaddleVLOcrClient(BaseOcrClient):
             Path(temp_file.name).unlink(missing_ok=True)
 
         return temp_file.name, _cleanup
-
-    def _preprocess(self, path: str) -> tuple[list[str], Callable[[], None]]:
-        if self._preprocessor is None:
-            return [path], lambda: None
-
-        try:
-            return self._preprocessor.process(path)
-        except Exception as exc:  # pragma: no cover - runtime guard
-            logger.warning(f"Preprocess failed, fallback to raw image: {exc}")
-            return [path], lambda: None
-
-    def _compose_cleanups(self, cleanups: list[Callable[[], None]]) -> Callable[[], None]:
-        def _cleanup() -> None:
-            for fn in cleanups:
-                try:
-                    fn()
-                except Exception as exc:  # pragma: no cover - best effort cleanup
-                    logger.warning(f"Cleanup failed: {exc}")
-
-        return _cleanup
-
-    def _save_debug_images(self, paths: list[str], filename: str | None) -> None:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        dir_path = self.debug_save_dir / ts
-        dir_path.mkdir(parents=True, exist_ok=True)
-
-        for idx, path in enumerate(paths):
-            try:
-                data = Path(path).read_bytes()
-                encoded = base64.b64encode(data).decode("ascii")
-                out_file = dir_path / f"page_{idx}.b64"
-                out_file.write_text(encoded, encoding="ascii")
-            except Exception as exc:  # pragma: no cover - debug safeguard
-                logger.warning(
-                    f"Failed to save debug base64 for {filename or path}: {exc}"
-                )
 
     def _valid_bbox(self, bbox: Any) -> bool:
         if not isinstance(bbox, (list, tuple)):

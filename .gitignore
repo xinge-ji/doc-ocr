@@ -13,8 +13,3 @@
 /.history
 /dist
 *.egg-info
-*.log
-*.logs
-*.env*
-uv.lock
-

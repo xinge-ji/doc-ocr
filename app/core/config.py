@@ -25,12 +25,6 @@ class Settings(BaseSettings):
     ocr_vl_rec_backend: str = "vllm-server"
     ocr_vl_rec_server_url: str = "http://localhost:8000/v1"
     ocr_layout_model_name: str = "PP-DocLayoutV2"
-    ocr_device: str = "gpu"
-    ocr_use_doc_orientation: bool = True
-    ocr_use_doc_unwarping: bool = True
-    ocr_use_basic_enhance: bool = True
-    ocr_debug_save_base64: bool = False
-    ocr_debug_save_dir: str = "debug/ocr"
     llm_nodes: list[LlmNode]
 
     @field_validator("llm_nodes")
