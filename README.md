@@ -16,6 +16,11 @@ uv run uvicorn app.main:app --reload
 # nohup uv run uvicorn app.main:app --host 0.0.0.0 --port 8080 --log-level info > app.log 2>&1 &
 ```
 
+### OCR 前处理
+
+- 默认开启文档方向分类 + 去扭曲（Paddle DocPreprocessor）+ 基础图像增强。
+- 通过环境变量控制：`OCR_USE_DOC_ORIENTATION`, `OCR_USE_DOC_UNWARPING`, `OCR_USE_BASIC_ENHANCE`。
+
 ## Test
 
 ```bash
