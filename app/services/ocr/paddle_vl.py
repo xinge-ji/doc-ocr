@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -8,6 +9,7 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any, Callable, Sequence
 
+from datetime import datetime
 from paddleocr import PaddleOCRVL
 
 from app.core.config import settings
@@ -30,6 +32,8 @@ class PaddleVLOcrClient(BaseOcrClient):
         layout_model_name: str | None = None,
         pipeline: PaddleOCRVL | None = None,
         preprocessor: OcrPreprocessor | None = None,
+        debug_save_base64: bool | None = None,
+        debug_save_dir: str | Path | None = None,
     ) -> None:
         self.model_dir = Path(model_dir or settings.doclayout_model_path)
         self.backend = backend or settings.ocr_vl_rec_backend
@@ -37,6 +41,10 @@ class PaddleVLOcrClient(BaseOcrClient):
         self.layout_model_name = layout_model_name or settings.ocr_layout_model_name
         self._pipeline = pipeline or self._build_pipeline()
         self._preprocessor = preprocessor or self._build_preprocessor()
+        self.debug_save_base64 = (
+            settings.ocr_debug_save_base64 if debug_save_base64 is None else debug_save_base64
+        )
+        self.debug_save_dir = Path(debug_save_dir or settings.ocr_debug_save_dir)
 
     def _build_pipeline(self) -> PaddleOCRVL:
         logger.info(f"--- INIT PADDLE: {self.server_url} ---")
@@ -78,6 +86,9 @@ class PaddleVLOcrClient(BaseOcrClient):
                 predict_input = preprocess_paths[0]
             else:
                 predict_input = preprocess_paths
+
+            if self.debug_save_base64 and preprocess_paths:
+                self._save_debug_images(preprocess_paths, filename)
 
             raw_output = await loop.run_in_executor(
                 None, lambda: self._pipeline.predict(predict_input)
@@ -208,6 +219,22 @@ class PaddleVLOcrClient(BaseOcrClient):
                     logger.warning(f"Cleanup failed: {exc}")
 
         return _cleanup
+
+    def _save_debug_images(self, paths: list[str], filename: str | None) -> None:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        dir_path = self.debug_save_dir / ts
+        dir_path.mkdir(parents=True, exist_ok=True)
+
+        for idx, path in enumerate(paths):
+            try:
+                data = Path(path).read_bytes()
+                encoded = base64.b64encode(data).decode("ascii")
+                out_file = dir_path / f"page_{idx}.b64"
+                out_file.write_text(encoded, encoding="ascii")
+            except Exception as exc:  # pragma: no cover - debug safeguard
+                logger.warning(
+                    f"Failed to save debug base64 for {filename or path}: {exc}"
+                )
 
     def _valid_bbox(self, bbox: Any) -> bool:
         if not isinstance(bbox, (list, tuple)):

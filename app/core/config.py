@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     ocr_use_doc_orientation: bool = True
     ocr_use_doc_unwarping: bool = True
     ocr_use_basic_enhance: bool = True
+    ocr_debug_save_base64: bool = False
+    ocr_debug_save_dir: str = "debug/ocr"
     llm_nodes: list[LlmNode]
 
     @field_validator("llm_nodes")
