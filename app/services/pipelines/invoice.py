@@ -107,14 +107,15 @@ class InvoiceExtractionPipeline:
     def _serialize_ocr_items(self, items: list[OcrItem]) -> list[dict[str, Any]]:
         """Convert OCR items into a LLM-friendly JSON structure."""
 
-        return [
-            {
-                "text": item.text,
-                "bbox": item.bounding_box.as_xyxy(),
-                "page": item.page,
-            }
-            for item in sorted(
-                items,
-                key=lambda i: (i.page, i.line_id or 0, i.block_id or 0),
+        ordered = sorted(items, key=lambda i: i.page)
+        serialized: list[dict[str, Any]] = []
+        for idx, item in enumerate(ordered):
+            serialized.append(
+                {
+                    "text": item.text,
+                    "bbox": item.bounding_box.as_xyxy(),
+                    "page": item.page,
+                    "idx": idx,
+                }
             )
-        ]
+        return serialized

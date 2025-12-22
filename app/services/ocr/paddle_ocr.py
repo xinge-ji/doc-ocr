@@ -5,9 +5,9 @@ import logging
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any, Sequence
 
-from paddleocr import PaddleOCR, draw_ocr
+from paddleocr import PaddleOCR
 from PIL import Image
 
 from app.core.config import settings
@@ -25,13 +25,11 @@ class PaddleOcrClient(BaseOcrClient):
         self,
         *,
         ocr: PaddleOCR | None = None,
-        visualizer: Callable[..., Any] | None = None,
         save_visualization: bool = True,
         vis_dir: str | Path | None = None,
         preprocessor: OcrPreprocessor | None = None,
     ) -> None:
         self._ocr = ocr or self._build_ocr()
-        self._visualizer = visualizer or draw_ocr
         self.save_visualization = save_visualization
         self.vis_dir = Path(vis_dir or settings.paddle_ocr_vis_dir)
         self.preprocessor = preprocessor or OcrPreprocessor()
@@ -57,39 +55,37 @@ class PaddleOcrClient(BaseOcrClient):
         run_id = uuid.uuid4().hex
         today = datetime.now().strftime("%Y%m%d")
 
-        try:
-            loop = asyncio.get_running_loop()
-            items: list[OcrItem] = []
+        loop = asyncio.get_running_loop()
+        items: list[OcrItem] = []
 
-            preprocess_result = await loop.run_in_executor(
-                None,
-                lambda: self.preprocessor.preprocess(
-                    source,
-                    filename=filename,
-                    content_type=content_type,
-                ),
+        preprocess_result = await loop.run_in_executor(
+            None,
+            lambda: self.preprocessor.preprocess(
+                source,
+                filename=filename,
+                content_type=content_type,
+            ),
+        )
+
+        if not preprocess_result.pages:
+            logger.info("预处理返回空页面：%s", filename or "bytes")
+            return OcrResult(items=[])
+
+        for page_info in preprocess_result.pages:
+            raw_results = await loop.run_in_executor(
+                None, lambda p=str(page_info.path): self._ocr.predict(p)
             )
+            if not raw_results:
+                continue
 
-            if not preprocess_result.pages:
-                logger.info("预处理返回空页面：%s", filename or "bytes")
-                return OcrResult(items=[])
-
-            for page_info in preprocess_result.pages:
-                raw_results = await loop.run_in_executor(
-                    None, lambda p=str(page_info.path): self._ocr.ocr(p, cls=False)
-                )
-                if not raw_results:
-                    continue
-
-                page = raw_results[0]
-                page_items = self._parse_page(page, page_info.page)
+            for result in raw_results:
+                page_items = self._parse_predict_result(result, page_info.page)
                 items.extend(page_items)
 
                 if self.save_visualization and page_items:
                     try:
-                        self._save_visualization(
-                            page_info.path,
-                            page,
+                        self._save_visualization_from_result(
+                            result,
                             today=today,
                             run_id=run_id,
                             page_idx=page_info.page,
@@ -97,49 +93,138 @@ class PaddleOcrClient(BaseOcrClient):
                     except Exception as exc:  # pragma: no cover - 可视化失败不阻塞主流程
                         logger.warning("保存可视化失败: %s", exc)
 
-            logger.info("PaddleOCR 提取完成，items=%d", len(items))
-            return OcrResult(items=items)
+        logger.info("PaddleOCR 提取完成，items=%d", len(items))
+        return OcrResult(items=items)
 
-    def _save_visualization(
-        self,
-        image_path: Path,
-        page: Sequence[Any],
-        *,
-        today: str,
-        run_id: str,
-        page_idx: int,
+    def _save_visualization_from_result(
+        self, result: Any, *, today: str, run_id: str, page_idx: int
     ) -> None:
-        image = Image.open(image_path).convert("RGB")
-        boxes = [line[0] for line in page if self._valid_line(line)]
-        texts = [line[1][0] for line in page if self._valid_line(line)]
-        scores = [line[1][1] for line in page if self._valid_line(line)]
+        vis_dir = self._build_vis_dir(today=today, run_id=run_id)
+        vis_dir.mkdir(parents=True, exist_ok=True)
 
-        if not boxes:
+        img_dict = getattr(result, "img", None)
+        if isinstance(img_dict, dict):
+            vis_img = img_dict.get("ocr_res_img")
+            if isinstance(vis_img, Image.Image):
+                target_path = vis_dir / f"page{page_idx}.jpg"
+                vis_img.save(target_path)
+                return
+
+        saver = getattr(result, "save_to_img", None)
+        if callable(saver):
+            saver(save_path=str(vis_dir))
             return
 
-        vis_array = self._visualizer(image, boxes, texts, scores)
-        vis_img = Image.fromarray(vis_array)
-        target_path = self._build_vis_path(today=today, run_id=run_id, page_idx=page_idx)
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        vis_img.save(target_path)
+        logger.warning("可视化结果不可用，缺少 img/save_to_img 属性")
 
-    def _build_vis_path(self, *, today: str, run_id: str, page_idx: int) -> Path:
-        filename = f"page{page_idx}.jpg"
-        return self.vis_dir / today / run_id / filename
+    def _build_vis_dir(self, *, today: str, run_id: str) -> Path:
+        return self.vis_dir / today / run_id
 
-    def _parse_page(self, page: Sequence[Any], page_idx: int) -> list[OcrItem]:
+    def _parse_predict_result(self, result: Any, page_idx: int) -> list[OcrItem]:
         items: list[OcrItem] = []
-        for line in page:
+
+        for box_points, text_val, _score in self._iter_result_entries(result):
+            bbox = self._to_bounding_box(box_points)
+            if bbox is None:
+                continue
+            items.append(OcrItem(text=str(text_val), bounding_box=bbox, page=page_idx))
+
+        return items
+
+    def _iter_result_entries(self, result: Any) -> list[tuple[Sequence[Any], str, float | None]]:
+        entries: list[tuple[Sequence[Any], str, float | None]] = []
+
+        json_data = self._get_json_data(result)
+        if isinstance(json_data, dict):
+            boxes = self._first_seq(json_data, ["boxes", "dt_polys", "polygons", "points"])
+            texts = self._first_seq(json_data, ["rec_text", "text", "texts"])
+            scores = self._first_seq(json_data, ["rec_score", "score", "scores"])
+            entries.extend(self._zip_entries(boxes, texts, scores))
+
+        ocr_res = getattr(result, "ocr_res", None)
+        if isinstance(ocr_res, list):
+            entries.extend(self._extract_from_ocr_res(ocr_res))
+
+        boxes_attr = getattr(result, "boxes", None)
+        texts_attr = getattr(result, "boxes_txt", None) or getattr(result, "txts", None)
+        scores_attr = getattr(result, "boxes_score", None) or getattr(result, "scores", None)
+        entries.extend(self._zip_entries(boxes_attr, texts_attr, scores_attr))
+
+        return entries
+
+    def _get_json_data(self, result: Any) -> Any:
+        json_data = getattr(result, "json", None)
+        if callable(json_data):
+            try:
+                return json_data()
+            except TypeError:
+                return None
+        return json_data
+
+    def _zip_entries(
+        self,
+        boxes: Any,
+        texts: Any,
+        scores: Any = None,
+    ) -> list[tuple[Sequence[Any], str, float | None]]:
+        if not isinstance(boxes, (list, tuple)) or not isinstance(texts, (list, tuple)):
+            return []
+
+        length = min(len(boxes), len(texts))
+        entries: list[tuple[Sequence[Any], str, float | None]] = []
+
+        for idx in range(length):
+            text_val = self._text_from_entry(texts[idx])
+            if text_val is None:
+                continue
+
+            score_val = None
+            if isinstance(scores, (list, tuple)) and idx < len(scores):
+                try:
+                    score_val = float(scores[idx])
+                except (TypeError, ValueError):
+                    score_val = None
+
+            entries.append((boxes[idx], text_val, score_val))
+
+        return entries
+
+    def _first_seq(self, data: dict[str, Any], keys: list[str]) -> Any:
+        for key in keys:
+            value = data.get(key)
+            if isinstance(value, (list, tuple)):
+                return value
+        return None
+
+    def _extract_from_ocr_res(self, ocr_res: Sequence[Any]) -> list[tuple[Sequence[Any], str, float | None]]:
+        entries: list[tuple[Sequence[Any], str, float | None]] = []
+        for line in ocr_res:
             if not self._valid_line(line):
                 continue
             box_points = line[0]
-            text_val, _score = line[1]
-            bbox = self._to_bounding_box(box_points)
-            items.append(OcrItem(text=str(text_val), bounding_box=bbox, page=page_idx))
-        return items
+            text_info = line[1]
+            text_val = self._text_from_entry(text_info)
+            score_val = None
+            if isinstance(text_info, (list, tuple)) and len(text_info) > 1:
+                try:
+                    score_val = float(text_info[1])
+                except (TypeError, ValueError):
+                    score_val = None
+            entries.append((box_points, text_val, score_val))
+        return entries
 
-    def _to_bounding_box(self, box_points: Sequence[Sequence[float]]) -> BoundingBox:
+    def _text_from_entry(self, value: Any) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, (list, tuple)) and value:
+            value = value[0]
+        value_str = str(value).strip()
+        return value_str or None
+
+    def _to_bounding_box(self, box_points: Any) -> BoundingBox | None:
         # PaddleOCR box: [[x1, y1], [x2, y2], [x3, y3], [x4, y4]]
+        if not self._valid_box(box_points):
+            return None
         p0, _, p2, _ = box_points
         return BoundingBox(x1=float(p0[0]), y1=float(p0[1]), x2=float(p2[0]), y2=float(p2[1]))
 
