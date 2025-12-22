@@ -21,10 +21,7 @@ class Settings(BaseSettings):
 
     app_env: str = "dev"
     log_level: str = "info"
-    doclayout_model_path: str = "/home/modelscope_cache/models/PaddlePaddle/PP-DocLayoutV2/"
-    ocr_vl_rec_backend: str = "vllm-server"
-    ocr_vl_rec_server_url: str = "http://localhost:8000/v1"
-    ocr_layout_model_name: str = "PP-DocLayoutV2"
+    ocr_backend: str = "paddle"
     preprocess_output_dir: str = "debug/preprocessed"
     paddle_det_model_name: str = "PP-OCRv5_server_det"
     paddle_rec_model_name: str = "PP-OCRv5_server_rec"
@@ -33,6 +30,9 @@ class Settings(BaseSettings):
     paddle_use_doc_orientation_classify: bool = False
     paddle_use_doc_unwarping: bool = False
     paddle_use_textline_orientation: bool = False
+    hunyuan_base_url: str = "http://localhost:8000/v1"
+    hunyuan_api_key: str = "EMPTY"
+    hunyuan_model: str = "Tencent-Hunyuan/HunyuanOCR"
     llm_nodes: list[LlmNode]
 
     @field_validator("llm_nodes")

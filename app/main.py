@@ -1,16 +1,18 @@
 import logging
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
+
 from app.api.routes.health import router as health_router
 from app.api.routes.invoice import router as invoice_router
-from app.services.ocr.paddle_ocr import PaddleOcrClient
+from app.core.config import settings
+from app.core.logging import setup_logging
 from app.services.llm.openai_client import OpenAIClient
+from app.services.ocr.hunyuan_ocr import HunyuanOcrClient
+from app.services.ocr.paddle_ocr import PaddleOcrClient
 from app.state import global_state
 
-# 1. 导入 setup_logging
-from app.core.logging import setup_logging
-
-# 2. 立即初始化日志 (在 app 创建之前)
+# 立即初始化日志 (在 app 创建之前)
 setup_logging()
 logger = logging.getLogger(__name__)
 
@@ -19,9 +21,15 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     logger.info("🚀 Starting Doc OCR Service...")
 
-    # 加载模型
-    logger.info("📦 Loading PaddleOCR models...")
-    global_state.ocr_client = PaddleOcrClient()
+    backend = (settings.ocr_backend or "paddle").strip().lower()
+    if backend == "hunyuan":
+        logger.info("📦 Loading Hunyuan OCR client...")
+        global_state.ocr_client = HunyuanOcrClient()
+    else:
+        if backend != "paddle":
+            logger.warning("未知 OCR_BACKEND=%s，回退 paddle", backend)
+        logger.info("📦 Loading PaddleOCR models...")
+        global_state.ocr_client = PaddleOcrClient()
 
     logger.info("🧠 Initializing LLM client...")
     global_state.llm_client = OpenAIClient()
