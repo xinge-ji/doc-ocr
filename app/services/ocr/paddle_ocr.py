@@ -43,6 +43,7 @@ class PaddleOcrClient(BaseOcrClient):
             use_doc_unwarping=settings.paddle_use_doc_unwarping,
             use_textline_orientation=settings.paddle_use_textline_orientation,
             device=settings.paddle_ocr_device,
+            paddlex_config="PaddleOCR.yaml",
         )
 
     async def extract(
@@ -72,13 +73,12 @@ class PaddleOcrClient(BaseOcrClient):
             return OcrResult(items=[])
 
         for page_info in preprocess_result.pages:
-            raw_results = await loop.run_in_executor(
-                None, lambda p=str(page_info.path): self._ocr.predict(p)
-            )
+            raw_results = await loop.run_in_executor(None, lambda p=str(page_info.path): self._ocr.predict(p))
             if not raw_results:
                 continue
 
             for result in raw_results:
+                self._debug_result_meta(result)
                 if self.save_visualization:
                     try:
                         self._save_visualization_from_result(
@@ -96,9 +96,7 @@ class PaddleOcrClient(BaseOcrClient):
         logger.info("PaddleOCR 提取完成，items=%d", len(items))
         return OcrResult(items=items)
 
-    def _save_visualization_from_result(
-        self, result: Any, *, today: str, run_id: str, page_idx: int
-    ) -> None:
+    def _save_visualization_from_result(self, result: Any, *, today: str, run_id: str, page_idx: int) -> None:
         vis_dir = self._build_vis_dir(today=today, run_id=run_id)
         vis_dir.mkdir(parents=True, exist_ok=True)
 
@@ -134,32 +132,36 @@ class PaddleOcrClient(BaseOcrClient):
     def _iter_result_entries(self, result: Any) -> list[tuple[Sequence[Any], str, float | None]]:
         entries: list[tuple[Sequence[Any], str, float | None]] = []
 
-        json_data = self._get_json_data(result)
-        if isinstance(json_data, dict):
-            boxes = self._first_seq(json_data, ["boxes", "dt_polys", "polygons", "points"])
-            texts = self._first_seq(json_data, ["rec_text", "text", "texts"])
-            scores = self._first_seq(json_data, ["rec_score", "score", "scores"])
-            entries.extend(self._zip_entries(boxes, texts, scores))
-
-        ocr_res = getattr(result, "ocr_res", None)
-        if isinstance(ocr_res, list):
-            entries.extend(self._extract_from_ocr_res(ocr_res))
-
-        boxes_attr = getattr(result, "boxes", None)
-        texts_attr = getattr(result, "boxes_txt", None) or getattr(result, "txts", None)
-        scores_attr = getattr(result, "boxes_score", None) or getattr(result, "scores", None)
+        boxes_attr = self._get_from_result(result, "rec_boxes")
+        texts_attr = self._get_from_result(result, "rec_texts")
+        scores_attr = self._get_from_result(result, "rec_scores")
         entries.extend(self._zip_entries(boxes_attr, texts_attr, scores_attr))
 
         return entries
 
-    def _get_json_data(self, result: Any) -> Any:
-        json_data = getattr(result, "json", None)
-        if callable(json_data):
+    def _debug_result_meta(self, result: Any) -> None:
+        try:
+            texts = self._get_from_result(result, "rec_texts") or []
+            boxes = self._get_from_result(result, "rec_boxes")
+            scores = self._get_from_result(result, "rec_scores") or []
+            logger.debug(
+                "PaddleOCR rec_texts len=%s boxes type=%s scores len=%s",
+                len(texts),
+                type(boxes),
+                len(scores),
+            )
+        except Exception:
+            pass
+
+    def _get_from_result(self, result: Any, key: str) -> Any:
+        if isinstance(result, dict):
+            return result.get(key)
+        if hasattr(result, "get"):
             try:
-                return json_data()
-            except TypeError:
-                return None
-        return json_data
+                return result.get(key)
+            except Exception:
+                pass
+        return getattr(result, key, None)
 
     def _zip_entries(
         self,
@@ -189,30 +191,6 @@ class PaddleOcrClient(BaseOcrClient):
 
         return entries
 
-    def _first_seq(self, data: dict[str, Any], keys: list[str]) -> Any:
-        for key in keys:
-            value = data.get(key)
-            if isinstance(value, (list, tuple)):
-                return value
-        return None
-
-    def _extract_from_ocr_res(self, ocr_res: Sequence[Any]) -> list[tuple[Sequence[Any], str, float | None]]:
-        entries: list[tuple[Sequence[Any], str, float | None]] = []
-        for line in ocr_res:
-            if not self._valid_line(line):
-                continue
-            box_points = line[0]
-            text_info = line[1]
-            text_val = self._text_from_entry(text_info)
-            score_val = None
-            if isinstance(text_info, (list, tuple)) and len(text_info) > 1:
-                try:
-                    score_val = float(text_info[1])
-                except (TypeError, ValueError):
-                    score_val = None
-            entries.append((box_points, text_val, score_val))
-        return entries
-
     def _text_from_entry(self, value: Any) -> str | None:
         if value is None:
             return None
@@ -222,42 +200,11 @@ class PaddleOcrClient(BaseOcrClient):
         return value_str or None
 
     def _to_bounding_box(self, box_points: Any) -> BoundingBox | None:
-        # PaddleOCR box: [[x1, y1], [x2, y2], [x3, y3], [x4, y4]]
-        if not self._valid_box(box_points):
-            return None
-        points = [self._coerce_point(pt) for pt in box_points]
-        if len(points) != 4 or any(p is None for p in points):
-            return None
-        p0, _, p2, _ = points
-        return BoundingBox(x1=p0[0], y1=p0[1], x2=p2[0], y2=p2[1])
-
-    def _valid_line(self, line: Any) -> bool:
-        if not isinstance(line, (list, tuple)) or len(line) < 2:
-            return False
-        box, text_info = line[0], line[1]
-        if not self._valid_box(box):
-            return False
-        if not isinstance(text_info, (list, tuple)) or len(text_info) < 1:
-            return False
-        if not text_info[0]:
-            return False
-        return True
-
-    def _valid_box(self, box: Any) -> bool:
-        if not isinstance(box, Sequence) or isinstance(box, (str, bytes)) or len(box) != 4:
-            return False
-        return all(self._valid_point(pt) for pt in box)
-
-    def _valid_point(self, pt: Any) -> bool:
-        if not isinstance(pt, Sequence) or isinstance(pt, (str, bytes)) or len(pt) != 2:
-            return False
-        return True
-
-    def _coerce_point(self, pt: Any) -> tuple[float, float] | None:
-        if not self._valid_point(pt):
+        # PaddleOCR rec_boxes is expected as [x1, y1, x2, y2]
+        if not isinstance(box_points, (list, tuple)) or len(box_points) != 4:
             return None
         try:
-            return float(pt[0]), float(pt[1])
-        except (TypeError, ValueError):
+            x1, y1, x2, y2 = box_points
+            return BoundingBox(x1=x1, y1=y1, x2=x2, y2=y2)
+        except Exception:
             return None
-
