@@ -79,10 +79,7 @@ class PaddleOcrClient(BaseOcrClient):
                 continue
 
             for result in raw_results:
-                page_items = self._parse_predict_result(result, page_info.page)
-                items.extend(page_items)
-
-                if self.save_visualization and page_items:
+                if self.save_visualization:
                     try:
                         self._save_visualization_from_result(
                             result,
@@ -92,6 +89,9 @@ class PaddleOcrClient(BaseOcrClient):
                         )
                     except Exception as exc:  # pragma: no cover - 可视化失败不阻塞主流程
                         logger.warning("保存可视化失败: %s", exc)
+
+                page_items = self._parse_predict_result(result, page_info.page)
+                items.extend(page_items)
 
         logger.info("PaddleOCR 提取完成，items=%d", len(items))
         return OcrResult(items=items)
@@ -225,8 +225,11 @@ class PaddleOcrClient(BaseOcrClient):
         # PaddleOCR box: [[x1, y1], [x2, y2], [x3, y3], [x4, y4]]
         if not self._valid_box(box_points):
             return None
-        p0, _, p2, _ = box_points
-        return BoundingBox(x1=float(p0[0]), y1=float(p0[1]), x2=float(p2[0]), y2=float(p2[1]))
+        points = [self._coerce_point(pt) for pt in box_points]
+        if len(points) != 4 or any(p is None for p in points):
+            return None
+        p0, _, p2, _ = points
+        return BoundingBox(x1=p0[0], y1=p0[1], x2=p2[0], y2=p2[1])
 
     def _valid_line(self, line: Any) -> bool:
         if not isinstance(line, (list, tuple)) or len(line) < 2:
@@ -241,6 +244,20 @@ class PaddleOcrClient(BaseOcrClient):
         return True
 
     def _valid_box(self, box: Any) -> bool:
-        if not isinstance(box, (list, tuple)) or len(box) != 4:
+        if not isinstance(box, Sequence) or isinstance(box, (str, bytes)) or len(box) != 4:
             return False
-        return all(isinstance(pt, (list, tuple)) and len(pt) == 2 for pt in box)
+        return all(self._valid_point(pt) for pt in box)
+
+    def _valid_point(self, pt: Any) -> bool:
+        if not isinstance(pt, Sequence) or isinstance(pt, (str, bytes)) or len(pt) != 2:
+            return False
+        return True
+
+    def _coerce_point(self, pt: Any) -> tuple[float, float] | None:
+        if not self._valid_point(pt):
+            return None
+        try:
+            return float(pt[0]), float(pt[1])
+        except (TypeError, ValueError):
+            return None
+
