@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from app.api.routes.health import router as health_router
 from app.api.routes.invoice import router as invoice_router
-from app.services.ocr.paddle_vl import PaddleVLOcrClient
+from app.services.ocr.paddle_ocr import PaddleOcrClient
 from app.services.llm.openai_client import OpenAIClient
 from app.state import global_state
 
@@ -21,7 +21,7 @@ async def lifespan(app: FastAPI):
 
     # 加载模型
     logger.info("📦 Loading PaddleOCR models...")
-    global_state.ocr_client = PaddleVLOcrClient()
+    global_state.ocr_client = PaddleOcrClient()
 
     logger.info("🧠 Initializing LLM client...")
     global_state.llm_client = OpenAIClient()

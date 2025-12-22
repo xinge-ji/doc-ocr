@@ -13,6 +13,7 @@ from paddleocr import PaddleOCRVL
 from app.core.config import settings
 from app.schemas.ocr import BoundingBox, OcrItem, OcrResult
 from app.services.ocr.base import BaseOcrClient
+from app.services.ocr.preprocess import OcrPreprocessor
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +29,14 @@ class PaddleVLOcrClient(BaseOcrClient):
         server_url: str | None = None,
         layout_model_name: str | None = None,
         pipeline: PaddleOCRVL | None = None,
+        preprocessor: OcrPreprocessor | None = None,
     ) -> None:
         self.model_dir = Path(model_dir or settings.doclayout_model_path)
         self.backend = backend or settings.ocr_vl_rec_backend
         self.server_url = server_url or settings.ocr_vl_rec_server_url
         self.layout_model_name = layout_model_name or settings.ocr_layout_model_name
         self._pipeline = pipeline or self._build_pipeline()
+        self.preprocessor = preprocessor or OcrPreprocessor()
 
     def _build_pipeline(self) -> PaddleOCRVL:
         logger.info(f"--- INIT PADDLE: {self.server_url} ---")
@@ -42,8 +45,6 @@ class PaddleVLOcrClient(BaseOcrClient):
             vl_rec_server_url=self.server_url,
             layout_detection_model_name=self.layout_model_name,
             layout_detection_model_dir=str(self.model_dir),
-            use_doc_orientation_classify=True,
-            use_chart_recognition=True,
         )
 
     async def extract(
@@ -62,37 +63,47 @@ class PaddleVLOcrClient(BaseOcrClient):
 
         try:
             loop = asyncio.get_running_loop()
-            raw_output = await loop.run_in_executor(None, lambda: self._pipeline.predict(path))
 
-            items = []
-            if raw_output:
-                for page_idx, page_obj in enumerate(raw_output):
-                    # --- 核心修改：回读策略 ---
-                    # 既然 page_obj.save_to_json() 能生成正确的文件，我们就利用它
-                    # 创建一个临时的 json 文件路径
-                    json_temp_name = f"{path}_res_{page_idx}.json"
+            preprocess_result = await loop.run_in_executor(
+                None,
+                lambda: self.preprocessor.preprocess(
+                    str(path),
+                    filename=filename,
+                    content_type=content_type,
+                ),
+            )
+
+            items: list[OcrItem] = []
+            for page_res in preprocess_result.pages:
+                raw_output = await loop.run_in_executor(
+                    None,
+                    lambda p=str(page_res.path): self._pipeline.predict(p),
+                )
+
+                if not raw_output:
+                    continue
+
+                for sub_idx, page_obj in enumerate(raw_output):
+                    json_temp_name = f"{page_res.path}_res_{sub_idx}.json"
 
                     try:
-                        # 1. 保存到磁盘
                         if hasattr(page_obj, "save_to_json"):
                             page_obj.save_to_json(json_temp_name)
-
-                            # 2. 读回来转成 Dict
                             with open(json_temp_name, "r", encoding="utf-8") as f:
                                 page_dict = json.load(f)
-
-                            logger.info(f"DEBUG: Successfully re-loaded JSON for page {page_idx}")
-
-                            # 3. 解析 Dict
-                            page_items = self._parse_single_page_dict(page_dict, page_idx + 1)
+                            logger.info(
+                                f"DEBUG: Successfully re-loaded JSON for page {page_res.page} (sub {sub_idx})"
+                            )
+                            page_num = page_res.page + sub_idx
+                            page_items = self._parse_single_page_dict(page_dict, page_num)
                             items.extend(page_items)
                         else:
-                            logger.info(f"WARNING: Page object {page_idx} has no save_to_json method")
-
+                            logger.info(
+                                f"WARNING: Page object {page_res.page} has no save_to_json method"
+                            )
                     except Exception as e:
-                        logger.info(f"ERROR processing page {page_idx}: {e}")
+                        logger.info(f"ERROR processing page {page_res.page}: {e}")
                     finally:
-                        # 清理这个临时的 JSON 文件
                         if os.path.exists(json_temp_name):
                             os.remove(json_temp_name)
 

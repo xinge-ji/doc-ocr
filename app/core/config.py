@@ -25,6 +25,14 @@ class Settings(BaseSettings):
     ocr_vl_rec_backend: str = "vllm-server"
     ocr_vl_rec_server_url: str = "http://localhost:8000/v1"
     ocr_layout_model_name: str = "PP-DocLayoutV2"
+    preprocess_output_dir: str = "debug/preprocessed"
+    paddle_det_model_name: str = "PP-OCRv5_server_det"
+    paddle_rec_model_name: str = "PP-OCRv5_server_rec"
+    paddle_ocr_device: str = "gpu"
+    paddle_ocr_vis_dir: str = "debug/paddle_ocr_vis"
+    paddle_use_doc_orientation_classify: bool = False
+    paddle_use_doc_unwarping: bool = False
+    paddle_use_textline_orientation: bool = False
     llm_nodes: list[LlmNode]
 
     @field_validator("llm_nodes")
