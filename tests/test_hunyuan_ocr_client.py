@@ -83,3 +83,6 @@ async def test_hunyuan_ocr_client_parses_bbox_and_text():
     call = fake_client.calls[0]
     assert call["url"] == "http://localhost:8000/v1/chat/completions"
     assert call["headers"]["Authorization"] == "Bearer KEY"
+    payload = call["json"]
+    assert payload["messages"][1]["content"][0]["type"] == "image_url"
+    assert payload["messages"][1]["content"][0]["image_url"]["url"].startswith("data:image")

@@ -83,6 +83,7 @@ class HunyuanOcrClient(BaseOcrClient):
         return response.json()
 
     def _build_payload(self, image_path: Path) -> dict[str, Any]:
+        data_url = self._to_data_url(image_path)
         return {
             "model": self.model,
             "messages": [
@@ -90,7 +91,10 @@ class HunyuanOcrClient(BaseOcrClient):
                 {
                     "role": "user",
                     "content": [
-                        {"type": "image", "image": str(image_path)},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": data_url},
+                        },
                         {
                             "type": "text",
                             "text": "检测并识别图片中的文字，将文本坐标格式化输出。",
