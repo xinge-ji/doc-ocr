@@ -54,6 +54,7 @@ class InvoiceExtractionPipeline:
             filename=filename,
             content_type=content_type,
         )
+        logger.debug(f"OCR result: {ocr_result}")
 
         t1 = time.perf_counter()
         ocr_duration = t1 - t0
@@ -99,7 +100,7 @@ class InvoiceExtractionPipeline:
         ocr_json = json.dumps(
             self._serialize_ocr_items(ocr_result.items),
             ensure_ascii=False,
-            indent=2,
+            separators=(",", ":"),
         )
         user_prompt = self.user_prompt_template.format(ocr_json=ocr_json)
         return self.system_prompt, user_prompt

@@ -169,6 +169,22 @@ class PaddleOcrClient(BaseOcrClient):
         texts: Any,
         scores: Any = None,
     ) -> list[tuple[Sequence[Any], str, float | None]]:
+        if hasattr(boxes, "tolist"):
+            try:
+                boxes = boxes.tolist()
+            except Exception:
+                pass
+        if hasattr(texts, "tolist"):
+            try:
+                texts = texts.tolist()
+            except Exception:
+                pass
+        if hasattr(scores, "tolist"):
+            try:
+                scores = scores.tolist()
+            except Exception:
+                pass
+
         if not isinstance(boxes, (list, tuple)) or not isinstance(texts, (list, tuple)):
             return []
 
