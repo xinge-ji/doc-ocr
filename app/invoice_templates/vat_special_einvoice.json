@@ -321,15 +321,15 @@
         "value_from": "capture"
       },
       "anchor_pos": {
-        "relative_to": "title_line",
+        "relative_to": "page",
         "region": {
           "x": [
             0.55,
             1.0
           ],
           "y": [
-            -0.02,
-            0.02
+            0.0,
+            0.2
           ]
         }
       },
@@ -550,9 +550,36 @@
       "x_tol": 10
     },
     "row_group": {
+      "mode": "anchor",
+      "anchor_required": [
+        "name"
+      ],
+      "anchor_any": [
+        "spec",
+        "unit",
+        "quantity",
+        "unit_price",
+        "amount",
+        "tax_rate",
+        "tax_amount"
+      ],
       "y_gap": 8,
       "allow_blank": true,
-      "blank_row_max": 3
+      "blank_row_max": 3,
+      "ignore_blank": true,
+      "joiner": "",
+      "merge_join": [
+        "name",
+        "spec",
+        "unit"
+      ],
+      "merge_first": [
+        "quantity",
+        "unit_price",
+        "amount",
+        "tax_rate",
+        "tax_amount"
+      ]
     },
     "row_end": {
       "stop_anchors": [

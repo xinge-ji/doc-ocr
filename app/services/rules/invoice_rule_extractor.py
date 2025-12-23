@@ -304,7 +304,20 @@ class InvoiceRuleExtractor:
 
         header_line = None
         header_columns = None
+        best_hits: list[str] = []
+        best_line: Line | None = None
+        best_line_value = ""
         for line in lines:
+            line_value = line_text(line, normalize=header_norm)
+            hits = [
+                label
+                for label in header_labels
+                if normalize_text(label, header_norm) in line_value
+            ]
+            if len(hits) > len(best_hits):
+                best_hits = hits
+                best_line = line
+                best_line_value = line_value
             match = _match_header_line(line, header_labels, header_norm, header_merge, min_hit)
             if match:
                 header_line = line
@@ -313,9 +326,20 @@ class InvoiceRuleExtractor:
 
         if header_line is None or header_columns is None:
             logger.warning("Rule table extraction failed: header_not_found")
+            if best_line is not None:
+                logger.debug(
+                    "Rule table header best_line y=%.2f hits=%s text=%s",
+                    best_line.y_center,
+                    best_hits,
+                    best_line_value,
+                )
             return None
 
         columns = _build_columns(header_columns, table_cfg.get("column_map") or {})
+        logger.debug(
+            "Rule table header matched labels=%s",
+            list(header_columns.keys()),
+        )
         assign_rule = table_cfg.get("assign_rule") or {}
         x_tol = float(assign_rule.get("x_tol", 0))
         if x_tol:
@@ -324,9 +348,19 @@ class InvoiceRuleExtractor:
                 column["right"] += x_tol
 
         row_group = table_cfg.get("row_group") or {}
+        mode = (row_group.get("mode") or "line").lower()
         row_y_gap = float(row_group.get("y_gap", 8))
         allow_blank = bool(row_group.get("allow_blank", True))
         blank_row_max = int(row_group.get("blank_row_max", 3))
+        ignore_blank = bool(row_group.get("ignore_blank", False))
+        anchor_required = set(row_group.get("anchor_required") or ["name"])
+        anchor_any = set(row_group.get("anchor_any") or [])
+        merge_join_fields = set(row_group.get("merge_join") or ["name", "spec", "unit"])
+        merge_first_fields = set(
+            row_group.get("merge_first")
+            or ["quantity", "unit_price", "amount", "tax_rate", "tax_amount"]
+        )
+        merge_joiner = str(row_group.get("joiner") or "")
         stop_anchors = table_cfg.get("row_end", {}).get("stop_anchors") or []
         sum_row_cfg = table_cfg.get("sum_row") or {}
         sum_required = bool(sum_row_cfg.get("required", False))
@@ -342,6 +376,8 @@ class InvoiceRuleExtractor:
         blank_rows = 0
         line_items: list[dict[str, Any]] = []
         sum_values: dict[str, float] = {}
+        current_block: list[dict[str, str]] | None = None
+        column_fields = [column["field"] for column in columns]
 
         for line in lines_sorted[start_index:]:
             if line.y_center <= header_line.y_center + row_y_gap:
@@ -351,21 +387,13 @@ class InvoiceRuleExtractor:
                 break
 
             row_cells = _assign_row_cells(line, columns)
-            if not any(row_cells.values()):
-                if not allow_blank:
-                    break
-                blank_rows += 1
-                if blank_rows >= blank_row_max:
-                    break
-                continue
-
-            blank_rows = 0
             if _is_sum_row(line, sum_row_cfg, sum_norm, sum_merge):
                 amount_val = _parse_number(row_cells.get("amount"))
                 tax_val = _parse_number(row_cells.get("tax_amount"))
                 if amount_val is None and sum_required:
                     logger.warning("Rule table extraction failed: sum_row_missing_amount")
                     return None
+                logger.debug("Rule table sum row cells=%s", row_cells)
                 if amount_val is not None:
                     sum_values["amount"] = amount_val
                 if tax_val is not None:
@@ -376,20 +404,71 @@ class InvoiceRuleExtractor:
                     sum_values["amount_with_tax"] = amount_val
                 break
 
-            line_payload = {key: value for key, value in row_cells.items() if value}
-            if required_fields and not required_fields.issubset(
-                {key for key, value in line_payload.items() if value}
-            ):
+            if mode == "anchor":
+                if not any(row_cells.values()):
+                    if ignore_blank:
+                        continue
+                    if not allow_blank:
+                        break
+                    blank_rows += 1
+                    if blank_rows >= blank_row_max:
+                        break
+                    continue
+
+                blank_rows = 0
+                is_anchor = _is_anchor_row(row_cells, anchor_required, anchor_any)
+                if is_anchor:
+                    if current_block:
+                        merged = _merge_row_cells(
+                            current_block,
+                            column_fields,
+                            merge_join_fields,
+                            merge_first_fields,
+                            merge_joiner,
+                        )
+                        _append_row_payload(line_items, merged, required_fields)
+                    current_block = [row_cells]
+                    logger.debug("Rule table anchor row started y=%.2f", line.y_center)
+                else:
+                    if current_block is None:
+                        logger.debug("Rule table row skipped before anchor cells=%s", row_cells)
+                        continue
+                    current_block.append(row_cells)
                 continue
-            line_items.append(line_payload)
+
+            if not any(row_cells.values()):
+                if not allow_blank:
+                    break
+                blank_rows += 1
+                if blank_rows >= blank_row_max:
+                    break
+                continue
+
+            blank_rows = 0
+            _append_row_payload(line_items, row_cells, required_fields)
+
+        if mode == "anchor" and current_block:
+            merged = _merge_row_cells(
+                current_block,
+                column_fields,
+                merge_join_fields,
+                merge_first_fields,
+                merge_joiner,
+            )
+            _append_row_payload(line_items, merged, required_fields)
 
         if sum_required and "amount_with_tax" not in sum_values:
             logger.warning("Rule table extraction failed: sum_row_missing")
             return None
         if not line_items:
-            logger.warning("Rule table extraction failed: no_lines")
-            return None
+            logger.warning("Rule table extraction warning: no_lines")
+            return _TableResult(lines=[], sum_values=sum_values)
 
+        logger.debug(
+            "Rule table extracted rows=%d sum_found=%s",
+            len(line_items),
+            "amount_with_tax" in sum_values,
+        )
         return _TableResult(lines=line_items, sum_values=sum_values)
 
 
@@ -523,6 +602,57 @@ def _assign_row_cells(line: Line, columns: list[dict[str, Any]]) -> dict[str, st
                 cells[column["field"]] += token.text
                 break
     return {key: value.strip() for key, value in cells.items()}
+
+
+def _is_anchor_row(
+    row_cells: Mapping[str, str],
+    required_fields: set[str],
+    any_fields: set[str],
+) -> bool:
+    if required_fields and not all(row_cells.get(field) for field in required_fields):
+        return False
+    if not any_fields:
+        return True
+    return any(row_cells.get(field) for field in any_fields)
+
+
+def _merge_row_cells(
+    rows: list[Mapping[str, str]],
+    column_fields: list[str],
+    merge_join_fields: set[str],
+    merge_first_fields: set[str],
+    joiner: str,
+) -> dict[str, str]:
+    merged: dict[str, str] = {field: "" for field in column_fields}
+    for field in column_fields:
+        values = [row.get(field, "").strip() for row in rows if row.get(field)]
+        if not values:
+            continue
+        if field in merge_join_fields:
+            merged[field] = joiner.join(values)
+        elif field in merge_first_fields:
+            merged[field] = values[0]
+        else:
+            merged[field] = values[0]
+    return merged
+
+
+def _append_row_payload(
+    line_items: list[dict[str, Any]],
+    row_cells: Mapping[str, str],
+    required_fields: set[str],
+) -> None:
+    line_payload = {key: value for key, value in row_cells.items() if value}
+    if required_fields and not required_fields.issubset(
+        {key for key, value in line_payload.items() if value}
+    ):
+        logger.warning(
+            "Rule table row dropped missing required fields=%s cells=%s",
+            sorted(required_fields),
+            row_cells,
+        )
+        return
+    line_items.append(line_payload)
 
 
 def _is_sum_row(

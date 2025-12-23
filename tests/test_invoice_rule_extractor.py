@@ -74,6 +74,51 @@ def test_rule_extractor_handles_split_title_and_sum_row() -> None:
     assert result.data["lines"][0]["name"] == "服务费"
 
 
+def test_rule_extractor_merges_anchor_rows() -> None:
+    items = [
+        _item("电子发票", 100, 10, 160, 25),
+        _item("增值税", 180, 10, 220, 25),
+        _item("专用发票", 230, 10, 280, 25),
+        _item("发票号码", 350, 10, 410, 25),
+        _item("12345678", 420, 10, 470, 25),
+        _item("开票日期", 500, 10, 560, 25),
+        _item("2024-01-02", 570, 10, 650, 25),
+        _item("项目名称", 50, 200, 110, 215),
+        _item("规格型号", 120, 200, 180, 215),
+        _item("单位", 190, 200, 220, 215),
+        _item("数量", 230, 200, 260, 215),
+        _item("单价", 270, 200, 310, 215),
+        _item("金额", 320, 200, 360, 215),
+        _item("税率/征收率", 370, 200, 440, 215),
+        _item("税额", 450, 200, 490, 215),
+        _item("*企业管理服务*公摊电费", 50, 230, 170, 245),
+        _item("24-08-01至25-1", 120, 230, 200, 245),
+        _item("96.32", 320, 250, 360, 265),
+        _item("6%", 370, 250, 400, 265),
+        _item("5.78", 450, 250, 480, 265),
+        _item("*水冰雪*公摊水费", 50, 280, 150, 295),
+        _item("24-07-26至25-1", 120, 280, 220, 295),
+        _item("18.55", 320, 300, 360, 315),
+        _item("3%", 370, 300, 400, 315),
+        _item("0.56", 450, 300, 480, 315),
+        _item("合计", 50, 330, 90, 345),
+        _item("100.00", 320, 330, 360, 345),
+        _item("6.34", 450, 330, 480, 345),
+        _item("开票人", 400, 900, 440, 915),
+        _item("张三", 450, 900, 480, 915),
+    ]
+    ocr_result = OcrResult(items=items)
+    extractor = InvoiceRuleExtractor()
+
+    result = extractor.extract(ocr_result)
+
+    assert result.complete is True
+    assert result.data is not None
+    assert len(result.data["lines"]) == 2
+    assert result.data["lines"][0]["name"] == "*企业管理服务*公摊电费"
+    assert result.data["lines"][0]["amount"] == 96.32
+
+
 def test_rule_extractor_splits_buyer_seller_by_region() -> None:
     items = _build_items(include_sum_row=True)
     items.extend(
