@@ -1,5 +1,5 @@
 {
-  "name": "vat_special_einvoice_property",
+  "name": "einvoice_vat_special",
   "match_rules": {
     "title": {
       "parts": [
@@ -28,11 +28,6 @@
         "text": "开票人",
         "required": true,
         "score": 2
-      },
-      {
-        "text": "产权证书/不动产权证号",
-        "required": true,
-        "score": 3
       }
     ],
     "min_score": 5
@@ -166,30 +161,21 @@
       "path": "total_amount",
       "type": "number",
       "description": "合计金额",
-      "required": false,
-      "constraints": {
-        "min": 0
-      }
+      "required": false
     },
     {
       "name": "tax_amount",
       "path": "tax_amount",
       "type": "number",
       "description": "合计税额",
-      "required": false,
-      "constraints": {
-        "min": 0
-      }
+      "required": false
     },
     {
       "name": "amount_with_tax",
       "path": "amount_with_tax",
       "type": "number",
       "description": "价税合计",
-      "required": true,
-      "constraints": {
-        "min": 0
-      }
+      "required": true
     },
     {
       "name": "lines",
@@ -211,14 +197,14 @@
             "name": "spec",
             "path": "spec",
             "type": "string",
-            "description": "产权证书/不动产权证号",
+            "description": "规格型号",
             "required": false
           },
           {
             "name": "unit",
             "path": "unit",
             "type": "string",
-            "description": "面积单位",
+            "description": "单位",
             "required": false
           },
           {
@@ -226,30 +212,21 @@
             "path": "quantity",
             "type": "number",
             "description": "数量",
-            "required": false,
-            "constraints": {
-              "min": 0
-            }
+            "required": false
           },
           {
             "name": "unit_price",
             "path": "unit_price",
             "type": "number",
             "description": "单价",
-            "required": false,
-            "constraints": {
-              "min": 0
-            }
+            "required": false
           },
           {
             "name": "amount",
             "path": "amount",
             "type": "number",
             "description": "金额",
-            "required": true,
-            "constraints": {
-              "min": 0
-            }
+            "required": true
           },
           {
             "name": "tax_rate",
@@ -266,10 +243,7 @@
             "path": "tax_amount",
             "type": "number",
             "description": "税额",
-            "required": false,
-            "constraints": {
-              "min": 0
-            }
+            "required": false
           }
         ]
       }
@@ -280,7 +254,7 @@
       "name": "invoice_number",
       "target_path": "invoice_number",
       "type": "text",
-      "use": "both",
+      "use": "text",
       "anchor_text": {
         "pattern": "发票号码[:：]?\\s*([A-Za-z0-9]+)",
         "match_scope": "line",
@@ -294,19 +268,6 @@
         "y_tol": 6,
         "fallback_right_neighbor": true
       },
-      "anchor_pos": {
-        "relative_to": "title_line",
-        "region": {
-          "x": [
-            0.55,
-            1.0
-          ],
-          "y": [
-            -0.02,
-            0.02
-          ]
-        }
-      },
       "value_regex": "([A-Za-z0-9]{8,})",
       "allow_extra": true,
       "normalize": {
@@ -319,24 +280,11 @@
       "name": "issue_date",
       "target_path": "issue_date",
       "type": "date",
-      "use": "both",
+      "use": "text",
       "anchor_text": {
         "pattern": "开票日期[:：]?\\s*(\\d{4}[-/.年]\\d{1,2}[-/.月]\\d{1,2}[-/.日])",
         "match_scope": "line",
         "value_from": "capture"
-      },
-      "anchor_pos": {
-        "relative_to": "title_line",
-        "region": {
-          "x": [
-            0.55,
-            1.0
-          ],
-          "y": [
-            -0.02,
-            0.02
-          ]
-        }
       },
       "value_regex": "(\\d{4}[-/.年]\\d{1,2}[-/.月]\\d{1,2}[-/.日])",
       "allow_extra": true,
@@ -424,7 +372,7 @@
         }
       },
       "anchor_text": {
-        "pattern": "统一社会信用人代码/纳税人识别号[:：]?\\s*([A-Za-z0-9]{12,24})",
+        "pattern": "统一社会信用代码/纳税人识别号[:：]?\\s*([A-Za-z0-9]{12,24})",
         "same_line": true,
         "dir": "right",
         "x_gap": [
@@ -499,7 +447,7 @@
         }
       },
       "anchor_text": {
-        "pattern": "统一社会信用人代码/纳税人识别号[:：]?\\s*([A-Za-z0-9]{12,24})",
+        "pattern": "统一社会信用代码/纳税人识别号[:：]?\\s*([A-Za-z0-9]{12,24})",
         "same_line": true,
         "dir": "right",
         "x_gap": [
@@ -520,8 +468,8 @@
   "table": {
     "header": [
       "项目名称",
-      "产权证书/不动产权证号",
-      "面积单位",
+      "规格型号",
+      "单位",
       "数量",
       "单价",
       "金额",
@@ -542,8 +490,8 @@
     },
     "column_map": {
       "项目名称": "name",
-      "产权证书/不动产权证号": "spec",
-      "面积单位": "unit",
+      "规格型号": "spec",
+      "单位": "unit",
       "数量": "quantity",
       "单价": "unit_price",
       "金额": "amount",
@@ -576,7 +524,7 @@
         "tax_amount"
       ],
       "anchor_skip_before_sum": true,
-      "y_gap": 8,
+      "y_gap": 15,
       "allow_blank": true,
       "blank_row_max": 3,
       "ignore_blank": true,

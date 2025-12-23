@@ -1,3 +1,5 @@
+"""OCR 预处理：表格线抑制 + 透视校正 + 方向旋转。"""
+
 from __future__ import annotations
 
 import logging
@@ -166,23 +168,33 @@ class OcrPreprocessor:
 
     def _apply_perspective(self, image: np.ndarray) -> np.ndarray:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        table_mask = self._detect_table_lines(gray)
         blurred = cv2.GaussianBlur(gray, (3, 3), 2, 2)
         edges = cv2.Canny(blurred, 60, 240, apertureSize=3)
+        if table_mask is not None:
+            edges = cv2.bitwise_and(edges, cv2.bitwise_not(table_mask))
         kernel = np.ones((3, 3), np.uint8)
         edges = cv2.dilate(edges, kernel, iterations=1)
 
         contour = self._find_max_contour(edges)
         if contour is None:
+            logger.debug("透视跳过: 未找到可用轮廓")
             return image
 
         box = self._get_box_points(contour)
         if box is None:
+            logger.debug("透视跳过: 未提取到四点")
             return image
 
         box = self._order_points(box)
+        if not self._is_perspective_confident(box, gray.shape):
+            logger.debug("透视跳过: 外框可信度不足")
+            return image
+
         width = self._point_distance(box[0], box[1])
         height = self._point_distance(box[1], box[2])
         if width <= 0 or height <= 0:
+            logger.debug("透视跳过: 目标尺寸异常")
             return image
 
         dst = np.array(
@@ -192,16 +204,52 @@ class OcrPreprocessor:
         matrix = cv2.getPerspectiveTransform(box, dst)
         return cv2.warpPerspective(image, matrix, (width, height))
 
+    def _detect_table_lines(self, gray: np.ndarray) -> np.ndarray | None:
+        height, width = gray.shape[:2]
+        min_side = min(height, width)
+        if min_side < 3:
+            return None
+
+        block_size = min(15, min_side if min_side % 2 == 1 else min_side - 1)
+        block_size = max(3, block_size)
+        binary = cv2.adaptiveThreshold(
+            gray,
+            255,
+            cv2.ADAPTIVE_THRESH_MEAN_C,
+            cv2.THRESH_BINARY_INV,
+            block_size,
+            10,
+        )
+
+        horizontal_size = min(max(15, width // 20), width)
+        vertical_size = min(max(15, height // 20), height)
+        horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (horizontal_size, 1))
+        vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, vertical_size))
+        horizontal = cv2.morphologyEx(binary, cv2.MORPH_OPEN, horizontal_kernel)
+        vertical = cv2.morphologyEx(binary, cv2.MORPH_OPEN, vertical_kernel)
+        table_mask = cv2.bitwise_or(horizontal, vertical)
+
+        margin_x = min(max(5, int(width * 0.03)), width // 2)
+        margin_y = min(max(5, int(height * 0.03)), height // 2)
+        if margin_y > 0:
+            table_mask[:margin_y, :] = 0
+            table_mask[-margin_y:, :] = 0
+        if margin_x > 0:
+            table_mask[:, :margin_x] = 0
+            table_mask[:, -margin_x:] = 0
+
+        return table_mask
+
     def _apply_rotation(self, image, angle: int):
         if angle % 360 == 0:
             return image
         normalized = angle % 360
         if normalized == 90:
-            return cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE)
+            return cv2.rotate(image, cv2.ROTATE_90_COUNTERCLOCKWISE)
         if normalized == 180:
             return cv2.rotate(image, cv2.ROTATE_180)
         if normalized == 270:
-            return cv2.rotate(image, cv2.ROTATE_90_COUNTERCLOCKWISE)
+            return cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE)
         # 非标准角度走仿射
         height, width = image.shape[:2]
         matrix = cv2.getRotationMatrix2D((width / 2, height / 2), normalized, 1.0)
@@ -243,6 +291,22 @@ class OcrPreprocessor:
 
     def _point_distance(self, a: np.ndarray, b: np.ndarray) -> int:
         return int(np.sqrt(np.sum(np.square(a - b))))
+
+    def _is_perspective_confident(self, box: np.ndarray, image_shape: tuple[int, int]) -> bool:
+        height, width = image_shape
+        if height <= 0 or width <= 0:
+            return False
+
+        contour = box.reshape(4, 1, 2).astype("float32")
+        corners = np.array(
+            [[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]],
+            dtype="float32",
+        )
+        hits = 0
+        for corner in corners:
+            if cv2.pointPolygonTest(contour, (float(corner[0]), float(corner[1])), False) >= 0:
+                hits += 1
+        return hits >= 2
 
     def _build_output_path(
         self,
