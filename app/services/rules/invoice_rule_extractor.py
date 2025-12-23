@@ -487,6 +487,7 @@ class InvoiceRuleExtractor:
                             merge_first_fields,
                             merge_joiner,
                         )
+                        logger.debug("Rule table merged row cells=%s", merged)
                         _append_row_payload(line_items, merged, required_fields)
                     current_block = [row_cells]
                     logger.debug(
@@ -499,6 +500,11 @@ class InvoiceRuleExtractor:
                         logger.debug("Rule table row skipped before anchor cells=%s", row_cells)
                         continue
                     current_block.append(row_cells)
+                    logger.debug(
+                        "Rule table row appended to block y=%.2f cells=%s",
+                        line.y_center,
+                        row_cells,
+                    )
                 continue
 
             if not any(row_cells.values()):
@@ -520,6 +526,7 @@ class InvoiceRuleExtractor:
                 merge_first_fields,
                 merge_joiner,
             )
+            logger.debug("Rule table merged row cells=%s", merged)
             _append_row_payload(line_items, merged, required_fields)
 
         if sum_required and "amount_with_tax" not in sum_values:
@@ -906,3 +913,4 @@ def _set_path(payload: dict[str, Any], path: str | None, value: Any) -> None:
     for part in parts[:-1]:
         cursor = cursor.setdefault(part, {})
     cursor[parts[-1]] = value
+

@@ -6,9 +6,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Callable
+from typing import Any, Callable
 
 import cv2
+import numpy as np
 from paddleocr import DocImgOrientationClassification
 
 from app.core.config import settings
@@ -129,9 +130,9 @@ class OcrPreprocessor:
             return 0
 
         res = output[0]
-        labels = getattr(res, "label_names", None) or []
-        label = labels[0] if labels else "0"
+        label = self._extract_orientation_label(res)
         angle = self._label_to_angle(label)
+        self._log_orientation_debug(res, angle)
         logger.info("方向预测 %s -> %d 度", label, angle)
         return angle
 
@@ -148,12 +149,48 @@ class OcrPreprocessor:
         if image is None:
             raise RuntimeError(f"读图失败：{image_path}")
 
-        rotated = self._apply_rotation(image, angle)
+        warped = self._apply_perspective(image)
+        rotated = self._apply_rotation(warped, angle)
+        logger.debug(
+            "旋转落盘: path=%s angle=%d size=%sx%s",
+            image_path,
+            angle,
+            rotated.shape[1],
+            rotated.shape[0],
+        )
         target_path = self._build_output_path(image_path, angle, page, today=today, run_id=run_id)
         target_path.parent.mkdir(parents=True, exist_ok=True)
         if not cv2.imwrite(str(target_path), rotated):
             raise RuntimeError(f"写文件失败：{target_path}")
         return target_path
+
+    def _apply_perspective(self, image: np.ndarray) -> np.ndarray:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        blurred = cv2.GaussianBlur(gray, (3, 3), 2, 2)
+        edges = cv2.Canny(blurred, 60, 240, apertureSize=3)
+        kernel = np.ones((3, 3), np.uint8)
+        edges = cv2.dilate(edges, kernel, iterations=1)
+
+        contour = self._find_max_contour(edges)
+        if contour is None:
+            return image
+
+        box = self._get_box_points(contour)
+        if box is None:
+            return image
+
+        box = self._order_points(box)
+        width = self._point_distance(box[0], box[1])
+        height = self._point_distance(box[1], box[2])
+        if width <= 0 or height <= 0:
+            return image
+
+        dst = np.array(
+            [[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]],
+            dtype="float32",
+        )
+        matrix = cv2.getPerspectiveTransform(box, dst)
+        return cv2.warpPerspective(image, matrix, (width, height))
 
     def _apply_rotation(self, image, angle: int):
         if angle % 360 == 0:
@@ -169,6 +206,43 @@ class OcrPreprocessor:
         height, width = image.shape[:2]
         matrix = cv2.getRotationMatrix2D((width / 2, height / 2), normalized, 1.0)
         return cv2.warpAffine(image, matrix, (width, height))
+
+    def _find_max_contour(self, edges: np.ndarray) -> np.ndarray | None:
+        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return None
+
+        max_contour = max(contours, key=cv2.contourArea)
+        if cv2.contourArea(max_contour) <= 0:
+            return None
+        return max_contour
+
+    def _get_box_points(self, contour: np.ndarray) -> np.ndarray | None:
+        perimeter = cv2.arcLength(contour, True)
+        if perimeter <= 0:
+            return None
+        approx = cv2.approxPolyDP(contour, 0.02 * perimeter, True)
+        if len(approx) == 4:
+            return approx.reshape(4, 2).astype("float32")
+
+        rect = cv2.minAreaRect(contour)
+        box = cv2.boxPoints(rect)
+        if box is None or len(box) != 4:
+            return None
+        return box.astype("float32")
+
+    def _order_points(self, points: np.ndarray) -> np.ndarray:
+        rect = np.zeros((4, 2), dtype="float32")
+        s = points.sum(axis=1)
+        rect[0] = points[np.argmin(s)]
+        rect[2] = points[np.argmax(s)]
+        diff = np.diff(points, axis=1)
+        rect[1] = points[np.argmin(diff)]
+        rect[3] = points[np.argmax(diff)]
+        return rect
+
+    def _point_distance(self, a: np.ndarray, b: np.ndarray) -> int:
+        return int(np.sqrt(np.sum(np.square(a - b))))
 
     def _build_output_path(
         self,
@@ -188,6 +262,43 @@ class OcrPreprocessor:
             self._orientation_model = DocImgOrientationClassification(model_name="PP-LCNet_x1_0_doc_ori")
         return self._orientation_model
 
+    def _extract_orientation_label(self, res: Any) -> str:
+        payload = self._unwrap_orientation_payload(res)
+        label_names = self._read_orientation_value(payload, "label_names") or []
+        label = label_names[0] if label_names else "0"
+        return str(label)
+
+    def _log_orientation_debug(self, res: Any, angle: int) -> None:
+        payload = self._unwrap_orientation_payload(res)
+        scores = self._format_orientation_value(self._read_orientation_value(payload, "scores"))
+        if scores is not None:
+            logger.info("方向预测 scores=%s", scores)
+
+        logger.debug(
+            "方向模型输出: input_path=%s page_index=%s class_ids=%s label_names=%s angle=%s",
+            self._read_orientation_value(payload, "input_path"),
+            self._read_orientation_value(payload, "page_index"),
+            self._format_orientation_value(self._read_orientation_value(payload, "class_ids")),
+            self._read_orientation_value(payload, "label_names"),
+            angle,
+        )
+
+    def _unwrap_orientation_payload(self, res: Any) -> Any:
+        if isinstance(res, dict):
+            return res.get("res", res)
+        inner = getattr(res, "res", None)
+        return inner if inner is not None else res
+
+    def _read_orientation_value(self, payload: Any, key: str) -> Any:
+        if isinstance(payload, dict):
+            return payload.get(key)
+        return getattr(payload, key, None)
+
+    def _format_orientation_value(self, value: Any) -> Any:
+        if hasattr(value, "tolist"):
+            return value.tolist()
+        return value
+
     def _label_to_angle(self, label: str) -> int:
         label_norm = str(label).lower()
         mapping = {
@@ -201,3 +312,4 @@ class OcrPreprocessor:
             "270_degree": 270,
         }
         return mapping.get(label_norm, 0)
+
