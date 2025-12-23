@@ -74,6 +74,31 @@ def test_rule_extractor_handles_split_title_and_sum_row() -> None:
     assert result.data["lines"][0]["name"] == "服务费"
 
 
+def test_rule_extractor_splits_buyer_seller_by_region() -> None:
+    items = _build_items(include_sum_row=True)
+    items.extend(
+        [
+            _item("购买方信息", 10, 110, 30, 180),
+            _item("厦门鹭燕医疗器械有限公司", 120, 120, 320, 135),
+            _item("91350200705497029M", 120, 150, 260, 165),
+            _item("销售方信息", 450, 110, 470, 180),
+            _item("福州市为齿而来科技有限公司", 600, 120, 900, 135),
+            _item("91350104MAD896RR6Y", 600, 150, 760, 165),
+        ]
+    )
+    ocr_result = OcrResult(items=items)
+    extractor = InvoiceRuleExtractor()
+
+    result = extractor.extract(ocr_result)
+
+    assert result.complete is True
+    assert result.data is not None
+    assert result.data["buyer"]["name"] == "厦门鹭燕医疗器械有限公司"
+    assert result.data["buyer"]["tax_id"] == "91350200705497029M"
+    assert result.data["seller"]["name"] == "福州市为齿而来科技有限公司"
+    assert result.data["seller"]["tax_id"] == "91350104MAD896RR6Y"
+
+
 def test_rule_extractor_requires_sum_row() -> None:
     ocr_result = OcrResult(items=_build_items(include_sum_row=False))
     extractor = InvoiceRuleExtractor()

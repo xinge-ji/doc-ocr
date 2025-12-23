@@ -66,6 +66,55 @@
       "required": false
     },
     {
+      "name": "issuer",
+      "path": "issuer",
+      "type": "string",
+      "description": "开票人",
+      "required": true
+    },
+    {
+      "name": "buyer_name",
+      "path": "buyer.name",
+      "type": "string",
+      "description": "购买方名称",
+      "required": true
+    },
+    {
+      "name": "buyer_tax_id",
+      "path": "buyer.tax_id",
+      "type": "string",
+      "description": "购买方统一社会信用代码/纳税人识别号",
+      "required": true
+    },
+    {
+      "name": "buyer_phone",
+      "path": "buyer.phone",
+      "type": "string",
+      "description": "购买方电话",
+      "required": false
+    },
+    {
+      "name": "buyer_address",
+      "path": "buyer.address",
+      "type": "string",
+      "description": "购买方地址",
+      "required": false
+    },
+    {
+      "name": "buyer_account_name",
+      "path": "buyer.account_name",
+      "type": "string",
+      "description": "购买方开户银行",
+      "required": false
+    },
+    {
+      "name": "buyer_account_no",
+      "path": "buyer.account_no",
+      "type": "string",
+      "description": "购买方银行账号",
+      "required": false
+    },
+    {
       "name": "seller_name",
       "path": "seller.name",
       "type": "string",
@@ -73,11 +122,39 @@
       "required": true
     },
     {
-      "name": "issuer",
-      "path": "issuer",
+      "name": "seller_tax_id",
+      "path": "seller.tax_id",
       "type": "string",
-      "description": "开票人",
+      "description": "销售方统一社会信用代码/纳税人识别号",
       "required": true
+    },
+    {
+      "name": "seller_phone",
+      "path": "seller.phone",
+      "type": "string",
+      "description": "销售方电话",
+      "required": false
+    },
+    {
+      "name": "seller_address",
+      "path": "seller.address",
+      "type": "string",
+      "description": "销售方地址",
+      "required": false
+    },
+    {
+      "name": "seller_account_name",
+      "path": "seller.account_name",
+      "type": "string",
+      "description": "销售方开户银行",
+      "required": false
+    },
+    {
+      "name": "seller_account_no",
+      "path": "seller.account_no",
+      "type": "string",
+      "description": "销售方银行账号",
+      "required": false
     },
     {
       "name": "total_amount",
@@ -122,24 +199,28 @@
             "name": "name",
             "path": "name",
             "type": "string",
+            "description": "项目名称",
             "required": true
           },
           {
             "name": "spec",
             "path": "spec",
             "type": "string",
+            "description": "规格型号",
             "required": false
           },
           {
             "name": "unit",
             "path": "unit",
             "type": "string",
+            "description": "单位",
             "required": false
           },
           {
             "name": "quantity",
             "path": "quantity",
             "type": "number",
+            "description": "数量",
             "required": false,
             "constraints": {
               "min": 0
@@ -149,6 +230,7 @@
             "name": "unit_price",
             "path": "unit_price",
             "type": "number",
+            "description": "单价",
             "required": false,
             "constraints": {
               "min": 0
@@ -158,6 +240,7 @@
             "name": "amount",
             "path": "amount",
             "type": "number",
+            "description": "金额",
             "required": true,
             "constraints": {
               "min": 0
@@ -167,6 +250,7 @@
             "name": "tax_rate",
             "path": "tax_rate",
             "type": "number",
+            "description": "税率/征收率",
             "required": false,
             "constraints": {
               "min": 0
@@ -176,6 +260,7 @@
             "name": "tax_amount",
             "path": "tax_amount",
             "type": "number",
+            "description": "税额",
             "required": false,
             "constraints": {
               "min": 0
@@ -231,7 +316,7 @@
       "type": "date",
       "use": "both",
       "anchor_text": {
-        "pattern": "开票日期[:：]?\\s*(\\d{4}[-/.年]\\d{1,2}[-/.月]\\d{1,2})",
+        "pattern": "开票日期[:：]?\\s*(\\d{4}[-/.年]\\d{1,2}[-/.月]\\d{1,2})[-/.日]",
         "match_scope": "line",
         "value_from": "capture"
       },
@@ -248,7 +333,7 @@
           ]
         }
       },
-      "value_regex": "(\\d{4}[-/.年]\\d{1,2}[-/.月]\\d{1,2})",
+      "value_regex": "(\\d{4}[-/.年]\\d{1,2}[-/.月]\\d{1,2}[-/.日])",
       "allow_extra": true,
       "normalize": {
         "remove_whitespace": true,
@@ -277,15 +362,108 @@
       }
     },
     {
+      "name": "buyer_name",
+      "target_path": "buyer.name",
+      "type": "text",
+      "use": "pos",
+      "pos_match_scope": "line",
+      "pos_line_y_tol": 6,
+      "anchor_pos": {
+        "relative_to": "page",
+        "region": {
+          "x": [
+            0.08,
+            0.48
+          ],
+          "y": [
+            0.12,
+            0.4
+          ]
+        }
+      },
+      "value_regex": "([\\u4e00-\\u9fff][\\u4e00-\\u9fffA-Za-z0-9（）()·\\-]*)",
+      "allow_extra": false,
+      "normalize": {
+        "remove_whitespace": true,
+        "fullwidth_to_halfwidth": true
+      }
+    },
+    {
+      "name": "buyer_tax_id",
+      "target_path": "buyer.tax_id",
+      "type": "text",
+      "use": "pos",
+      "pos_match_scope": "line",
+      "pos_line_y_tol": 6,
+      "anchor_pos": {
+        "relative_to": "page",
+        "region": {
+          "x": [
+            0.08,
+            0.48
+          ],
+          "y": [
+            0.12,
+            0.4
+          ]
+        }
+      },
+      "value_regex": "([A-Za-z0-9]{15,20})",
+      "allow_extra": false,
+      "normalize": {
+        "remove_whitespace": true,
+        "fullwidth_to_halfwidth": true
+      }
+    },
+    {
       "name": "seller_name",
       "target_path": "seller.name",
       "type": "text",
-      "use": "text",
-      "anchor_text": {
-        "pattern": "(销售方名称|销售方)[:：]?\\s*([^\\s]+)",
-        "match_scope": "line",
-        "value_from": "capture"
+      "use": "pos",
+      "pos_match_scope": "line",
+      "pos_line_y_tol": 6,
+      "anchor_pos": {
+        "relative_to": "page",
+        "region": {
+          "x": [
+            0.55,
+            1.0
+          ],
+          "y": [
+            0.12,
+            0.4
+          ]
+        }
       },
+      "value_regex": "([\\u4e00-\\u9fff][\\u4e00-\\u9fffA-Za-z0-9（）()·\\-]*)",
+      "allow_extra": false,
+      "normalize": {
+        "remove_whitespace": true,
+        "fullwidth_to_halfwidth": true
+      }
+    },
+    {
+      "name": "seller_tax_id",
+      "target_path": "seller.tax_id",
+      "type": "text",
+      "use": "pos",
+      "pos_match_scope": "line",
+      "pos_line_y_tol": 6,
+      "anchor_pos": {
+        "relative_to": "page",
+        "region": {
+          "x": [
+            0.55,
+            1.0
+          ],
+          "y": [
+            0.12,
+            0.4
+          ]
+        }
+      },
+      "value_regex": "([A-Za-z0-9]{15,20})",
+      "allow_extra": false,
       "normalize": {
         "remove_whitespace": true,
         "fullwidth_to_halfwidth": true

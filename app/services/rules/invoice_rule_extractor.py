@@ -127,7 +127,14 @@ class InvoiceRuleExtractor:
         )
 
         if use_text:
-            value = self._extract_by_text(field, lines, normalize_cfg)
+            value = self._extract_by_text(
+                field,
+                lines,
+                page_width,
+                page_height,
+                title_line,
+                normalize_cfg,
+            )
             if value:
                 return value
         if use_pos:
@@ -147,14 +154,35 @@ class InvoiceRuleExtractor:
         self,
         field: Mapping[str, Any],
         lines: list[Line],
+        page_width: float,
+        page_height: float,
+        title_line: Line | None,
         normalize_cfg: NormalizeConfig,
     ) -> str | None:
         anchor = field.get("anchor_text") or {}
         pattern = anchor.get("pattern")
         match_scope = (anchor.get("match_scope") or "line").lower()
         value_from = anchor.get("value_from") or "capture"
+        region_lines = lines
+        anchor_pos = field.get("anchor_pos") or {}
+        region_bounds = _resolve_region_bounds(anchor_pos, page_width, page_height, title_line)
+        if region_bounds:
+            region_items = _filter_items_in_region(
+                [item for line in lines for item in line.items],
+                region_bounds,
+            )
+            if not region_items:
+                return None
+            y_tol = float(anchor.get("y_tol", 6))
+            region_lines = cluster_lines(region_items, y_tol=y_tol)
         if pattern:
-            return _extract_with_pattern(lines, pattern, match_scope, value_from, normalize_cfg)
+            return _extract_with_pattern(
+                region_lines,
+                pattern,
+                match_scope,
+                value_from,
+                normalize_cfg,
+            )
 
         anchor_text = anchor.get("text")
         if not anchor_text:
@@ -164,7 +192,7 @@ class InvoiceRuleExtractor:
         x_gap = anchor.get("x_gap") or [0, float("inf")]
         x_min, x_max = float(x_gap[0]), float(x_gap[1])
 
-        for line in lines:
+        for line in region_lines:
             items = line.sorted_items()
             for idx, item in enumerate(items):
                 item_norm = normalize_text(item.text, normalize_cfg)
@@ -198,40 +226,41 @@ class InvoiceRuleExtractor:
         lines: list[Line],
     ) -> str | None:
         anchor_pos = field.get("anchor_pos") or {}
-        region = anchor_pos.get("region") or {}
-        if not region:
+        region_bounds = _resolve_region_bounds(anchor_pos, page_width, page_height, title_line)
+        if not region_bounds:
             return None
-        relative_to = (anchor_pos.get("relative_to") or "page").lower()
-
-        x_range = region.get("x") or [0.0, 1.0]
-        y_range = region.get("y") or [0.0, 1.0]
-        x_min, x_max = float(x_range[0]) * page_width, float(x_range[1]) * page_width
-
-        if relative_to == "title_line" and title_line:
-            y_center = title_line.y_center
-            y_min = y_center + float(y_range[0]) * page_height
-            y_max = y_center + float(y_range[1]) * page_height
-        else:
-            y_min = float(y_range[0]) * page_height
-            y_max = float(y_range[1]) * page_height
-
         items = [item for line in lines for item in line.items]
-        region_items = [
-            item
-            for item in items
-            if x_min <= (item.bounding_box.x1 + item.bounding_box.x2) / 2 <= x_max
-            and y_min <= (item.bounding_box.y1 + item.bounding_box.y2) / 2 <= y_max
-        ]
+        region_items = _filter_items_in_region(items, region_bounds)
         if not region_items:
             return None
 
         tokens = to_tokens(region_items)
         tokens.sort(key=lambda t: t.x1)
         merge_cfg = MergeTokensConfig.from_dict(field.get("merge_tokens"))
+        value_regex = field.get("value_regex")
+        match_scope = (field.get("pos_match_scope") or anchor_pos.get("match_scope") or "join").lower()
+        if match_scope == "line":
+            line_y_tol = float(field.get("pos_line_y_tol") or anchor_pos.get("line_y_tol") or 6)
+            region_lines = cluster_lines(region_items, y_tol=line_y_tol)
+            for line in sorted(region_lines, key=lambda entry: entry.y_center):
+                line_tokens = to_tokens(line.sorted_items())
+                if merge_cfg.merge_single_char or merge_cfg.max_x_gap > 0:
+                    line_tokens = merge_tokens(line_tokens, merge_cfg)
+                raw_text = join_tokens(line_tokens)
+                if value_regex:
+                    match = re.search(value_regex, normalize_text(raw_text, normalize_cfg))
+                    if not match:
+                        continue
+                    value = match.group(1) if match.lastindex else match.group(0)
+                    return value.strip()
+                if field.get("allow_extra"):
+                    return normalize_text(raw_text, normalize_cfg)
+                return raw_text.strip()
+            return None
+
         if merge_cfg.merge_single_char or merge_cfg.max_x_gap > 0:
             tokens = merge_tokens(tokens, merge_cfg)
         raw_text = join_tokens(tokens)
-        value_regex = field.get("value_regex")
         if value_regex:
             match = re.search(value_regex, normalize_text(raw_text, normalize_cfg))
             if not match:
@@ -523,6 +552,42 @@ def _page_bounds(items: list[OcrItem]) -> tuple[float, float]:
         max_x = max(max_x, item.bounding_box.x2)
         max_y = max(max_y, item.bounding_box.y2)
     return max_x, max_y
+
+
+def _resolve_region_bounds(
+    anchor_pos: Mapping[str, Any],
+    page_width: float,
+    page_height: float,
+    title_line: Line | None,
+) -> tuple[float, float, float, float] | None:
+    region = anchor_pos.get("region") or {}
+    if not region:
+        return None
+    relative_to = (anchor_pos.get("relative_to") or "page").lower()
+    x_range = region.get("x") or [0.0, 1.0]
+    y_range = region.get("y") or [0.0, 1.0]
+    x_min, x_max = float(x_range[0]) * page_width, float(x_range[1]) * page_width
+    if relative_to == "title_line" and title_line:
+        y_center = title_line.y_center
+        y_min = y_center + float(y_range[0]) * page_height
+        y_max = y_center + float(y_range[1]) * page_height
+    else:
+        y_min = float(y_range[0]) * page_height
+        y_max = float(y_range[1]) * page_height
+    return x_min, x_max, y_min, y_max
+
+
+def _filter_items_in_region(
+    items: list[OcrItem],
+    bounds: tuple[float, float, float, float],
+) -> list[OcrItem]:
+    x_min, x_max, y_min, y_max = bounds
+    return [
+        item
+        for item in items
+        if x_min <= (item.bounding_box.x1 + item.bounding_box.x2) / 2 <= x_max
+        and y_min <= (item.bounding_box.y1 + item.bounding_box.y2) / 2 <= y_max
+    ]
 
 
 def _set_path(payload: dict[str, Any], path: str | None, value: Any) -> None:
