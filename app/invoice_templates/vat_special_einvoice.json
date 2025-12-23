@@ -1,0 +1,363 @@
+{
+  "name": "vat_special_einvoice",
+  "match_rules": {
+    "title": {
+      "parts": [
+        "电子发票",
+        "增值税",
+        "专用发票"
+      ],
+      "same_line": true,
+      "order": "left_to_right",
+      "y_tol": 8,
+      "normalize": {
+        "remove_whitespace": true,
+        "remove_brackets": true,
+        "fullwidth_to_halfwidth": true
+      },
+      "required": true,
+      "score": 3
+    },
+    "anchors": [
+      {
+        "text": "发票号码",
+        "required": true,
+        "score": 2
+      },
+      {
+        "text": "开票人",
+        "required": true,
+        "score": 2
+      }
+    ],
+    "min_score": 5
+  },
+  "fixed_fields": {
+    "invoice_type": "电子发票-增值税专用发票"
+  },
+  "fields": [
+    {
+      "name": "invoice_type",
+      "path": "invoice_type",
+      "type": "string",
+      "description": "发票类型",
+      "required": true,
+      "constraints": {
+        "enum": [
+          "电子发票-增值税专用发票"
+        ]
+      }
+    },
+    {
+      "name": "invoice_number",
+      "path": "invoice_number",
+      "type": "string",
+      "description": "发票号码",
+      "required": true,
+      "constraints": {
+        "regex": "^[A-Za-z0-9]{8,}$"
+      }
+    },
+    {
+      "name": "issue_date",
+      "path": "issue_date",
+      "type": "date",
+      "description": "开票日期",
+      "required": false
+    },
+    {
+      "name": "seller_name",
+      "path": "seller.name",
+      "type": "string",
+      "description": "销售方名称",
+      "required": true
+    },
+    {
+      "name": "issuer",
+      "path": "issuer",
+      "type": "string",
+      "description": "开票人",
+      "required": true
+    },
+    {
+      "name": "total_amount",
+      "path": "total_amount",
+      "type": "number",
+      "description": "合计金额",
+      "required": false,
+      "constraints": {
+        "min": 0
+      }
+    },
+    {
+      "name": "tax_amount",
+      "path": "tax_amount",
+      "type": "number",
+      "description": "合计税额",
+      "required": false,
+      "constraints": {
+        "min": 0
+      }
+    },
+    {
+      "name": "amount_with_tax",
+      "path": "amount_with_tax",
+      "type": "number",
+      "description": "价税合计",
+      "required": true,
+      "constraints": {
+        "min": 0
+      }
+    },
+    {
+      "name": "lines",
+      "path": "lines",
+      "type": "array",
+      "description": "明细行",
+      "required": true,
+      "items": {
+        "type": "object",
+        "properties": [
+          {
+            "name": "name",
+            "path": "name",
+            "type": "string",
+            "required": true
+          },
+          {
+            "name": "spec",
+            "path": "spec",
+            "type": "string",
+            "required": false
+          },
+          {
+            "name": "unit",
+            "path": "unit",
+            "type": "string",
+            "required": false
+          },
+          {
+            "name": "quantity",
+            "path": "quantity",
+            "type": "number",
+            "required": false,
+            "constraints": {
+              "min": 0
+            }
+          },
+          {
+            "name": "unit_price",
+            "path": "unit_price",
+            "type": "number",
+            "required": false,
+            "constraints": {
+              "min": 0
+            }
+          },
+          {
+            "name": "amount",
+            "path": "amount",
+            "type": "number",
+            "required": true,
+            "constraints": {
+              "min": 0
+            }
+          },
+          {
+            "name": "tax_rate",
+            "path": "tax_rate",
+            "type": "number",
+            "required": false,
+            "constraints": {
+              "min": 0
+            }
+          },
+          {
+            "name": "tax_amount",
+            "path": "tax_amount",
+            "type": "number",
+            "required": false,
+            "constraints": {
+              "min": 0
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "non_table_fields": [
+    {
+      "name": "invoice_number",
+      "target_path": "invoice_number",
+      "type": "text",
+      "use": "both",
+      "anchor_text": {
+        "pattern": "发票号码[:：]?\\s*([A-Za-z0-9]+)",
+        "match_scope": "line",
+        "value_from": "capture",
+        "same_line": true,
+        "dir": "right",
+        "x_gap": [
+          5,
+          200
+        ],
+        "y_tol": 6,
+        "fallback_right_neighbor": true
+      },
+      "anchor_pos": {
+        "relative_to": "title_line",
+        "region": {
+          "x": [
+            0.55,
+            1.0
+          ],
+          "y": [
+            -0.02,
+            0.02
+          ]
+        }
+      },
+      "value_regex": "([A-Za-z0-9]{8,})",
+      "allow_extra": true,
+      "normalize": {
+        "remove_whitespace": true,
+        "remove_brackets": true,
+        "fullwidth_to_halfwidth": true
+      }
+    },
+    {
+      "name": "issue_date",
+      "target_path": "issue_date",
+      "type": "date",
+      "use": "both",
+      "anchor_text": {
+        "pattern": "开票日期[:：]?\\s*(\\d{4}[-/.年]\\d{1,2}[-/.月]\\d{1,2})",
+        "match_scope": "line",
+        "value_from": "capture"
+      },
+      "anchor_pos": {
+        "relative_to": "title_line",
+        "region": {
+          "x": [
+            0.55,
+            1.0
+          ],
+          "y": [
+            -0.02,
+            0.02
+          ]
+        }
+      },
+      "value_regex": "(\\d{4}[-/.年]\\d{1,2}[-/.月]\\d{1,2})",
+      "allow_extra": true,
+      "normalize": {
+        "remove_whitespace": true,
+        "fullwidth_to_halfwidth": true
+      }
+    },
+    {
+      "name": "issuer",
+      "target_path": "issuer",
+      "type": "text",
+      "use": "text",
+      "anchor_text": {
+        "text": "开票人",
+        "same_line": true,
+        "dir": "right",
+        "x_gap": [
+          5,
+          160
+        ],
+        "y_tol": 6,
+        "fallback_right_neighbor": true
+      },
+      "normalize": {
+        "remove_whitespace": true,
+        "fullwidth_to_halfwidth": true
+      }
+    },
+    {
+      "name": "seller_name",
+      "target_path": "seller.name",
+      "type": "text",
+      "use": "text",
+      "anchor_text": {
+        "pattern": "(销售方名称|销售方)[:：]?\\s*([^\\s]+)",
+        "match_scope": "line",
+        "value_from": "capture"
+      },
+      "normalize": {
+        "remove_whitespace": true,
+        "fullwidth_to_halfwidth": true
+      }
+    }
+  ],
+  "table": {
+    "header": [
+      "项目名称",
+      "规格型号",
+      "单位",
+      "数量",
+      "单价",
+      "金额",
+      "税率/征收率",
+      "税额"
+    ],
+    "header_match": {
+      "normalize": {
+        "remove_whitespace": true,
+        "fullwidth_to_halfwidth": true
+      },
+      "merge_tokens": {
+        "merge_single_char": true,
+        "max_x_gap": 40
+      },
+      "y_tol": 8,
+      "min_hit": 8
+    },
+    "column_map": {
+      "项目名称": "name",
+      "规格型号": "spec",
+      "单位": "unit",
+      "数量": "quantity",
+      "单价": "unit_price",
+      "金额": "amount",
+      "税率/征收率": "tax_rate",
+      "税额": "tax_amount"
+    },
+    "assign_rule": {
+      "mode": "by_x",
+      "x_tol": 10
+    },
+    "row_group": {
+      "y_gap": 8,
+      "allow_blank": true,
+      "blank_row_max": 3
+    },
+    "row_end": {
+      "stop_anchors": [
+        "开票人"
+      ]
+    },
+    "sum_row": {
+      "key": "合计",
+      "required": true,
+      "normalize": {
+        "remove_whitespace": true
+      },
+      "merge_tokens": {
+        "merge_single_char": true,
+        "max_x_gap": 40
+      },
+      "targets": {
+        "amount": "total_amount",
+        "tax_amount": "tax_amount",
+        "amount_with_tax": "amount_with_tax"
+      }
+    },
+    "required_fields": [
+      "name",
+      "amount"
+    ]
+  }
+}

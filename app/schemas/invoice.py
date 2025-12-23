@@ -163,6 +163,10 @@ class InvoiceLine(BaseModel):
 class InvoiceData(BaseModel):
     """Structured invoice payload extracted via OCR + LLM."""
 
+    template_name: str | None = Field(
+        default=None,
+        description="Matched template identifier when rule extraction succeeds.",
+    )
     invoice_type: str = Field(
         ...,
         description="Invoice category/type (e.g., VAT special, VAT normal).",
@@ -236,6 +240,27 @@ class ExtractionResponse(BaseModel):
     data: InvoiceData = Field(
         ...,
         description="Structured invoice fields payload.",
+    )
+    message: str = Field(
+        ...,
+        description="Human-readable status or error message.",
+    )
+
+
+class TemplateExtractionResponse(BaseModel):
+    """Template-driven extraction response with dynamic payload."""
+
+    success: bool = Field(
+        ...,
+        description="Indicates whether extraction succeeded end-to-end.",
+    )
+    template_name: str | None = Field(
+        default=None,
+        description="Matched template name when rule extraction succeeds.",
+    )
+    data: dict[str, Any] | None = Field(
+        default=None,
+        description="Template-specific extraction payload.",
     )
     message: str = Field(
         ...,

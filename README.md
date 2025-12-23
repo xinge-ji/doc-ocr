@@ -16,6 +16,13 @@ uv run uvicorn app.main:app --reload
 # nohup uv run uvicorn app.main:app --host 0.0.0.0 --port 8080 --log-level info > app.log 2>&1 &
 ```
 
+## Rule-based invoice templates
+
+- Templates live under `app/invoice_templates/` as JSON.
+- Pipeline flow is OCR -> rules; output fields are defined by the matched template.
+- When rule extraction is incomplete, the API returns `422` with rule errors.
+- Template `fields` define types, descriptions, and constraints used during validation.
+
 ## Test
 
 ```bash

@@ -1,0 +1,535 @@
+"""Usage: rule-based invoice extraction from OCR items."""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from typing import Any, Mapping
+
+from app.schemas.ocr import OcrItem, OcrResult
+from app.services.rules.template_loader import load_templates
+from app.services.rules.template_matcher import match_template
+from app.services.rules.template_schema import validate_template_payload
+from app.services.rules.text_normalize import (
+    Line,
+    MergeTokensConfig,
+    NormalizeConfig,
+    cluster_lines,
+    join_tokens,
+    line_text,
+    merge_tokens,
+    normalize_text,
+    to_tokens,
+)
+
+
+@dataclass(frozen=True)
+class RuleExtractionResult:
+    complete: bool
+    data: dict[str, Any] | None
+    template_name: str | None
+    errors: list[str]
+
+
+class InvoiceRuleExtractor:
+    def __init__(self) -> None:
+        self._templates = load_templates()
+
+    def extract(self, ocr_result: OcrResult) -> RuleExtractionResult:
+        if not ocr_result.items:
+            return RuleExtractionResult(
+                complete=False,
+                data=None,
+                template_name=None,
+                errors=["no_ocr_items"],
+            )
+        if not self._templates:
+            return RuleExtractionResult(
+                complete=False,
+                data=None,
+                template_name=None,
+                errors=["no_templates"],
+            )
+
+        match = match_template(ocr_result.items, self._templates)
+        if not match:
+            return RuleExtractionResult(
+                complete=False,
+                data=None,
+                template_name=None,
+                errors=["template_not_matched"],
+            )
+
+        template = match.template
+        page_items = [item for item in ocr_result.items if item.page == match.page]
+        page_width, page_height = _page_bounds(page_items)
+
+        title_rule = template.get("match_rules", {}).get("title") or {}
+        lines = cluster_lines(page_items, y_tol=float(title_rule.get("y_tol", 6)))
+        title_line = match.title_line or _best_title_line(lines)
+
+        payload: dict[str, Any] = {}
+        payload.update(template.get("fixed_fields", {}))
+
+        non_table_fields = template.get("non_table_fields") or []
+        for field in non_table_fields:
+            value = self._extract_field(field, lines, page_width, page_height, title_line)
+            if value is not None:
+                _set_path(payload, field.get("target_path") or field.get("name"), value)
+
+        table_cfg = template.get("table") or {}
+        table_result = self._extract_table(table_cfg, lines)
+        template_name = template.get("name")
+        if table_result is None:
+            return RuleExtractionResult(
+                complete=False,
+                data=None,
+                template_name=template_name,
+                errors=["table_extraction_failed"],
+            )
+
+        payload["lines"] = table_result.lines
+        sum_targets = table_cfg.get("sum_row", {}).get("targets") or {}
+        for key, target in sum_targets.items():
+            if key in table_result.sum_values:
+                _set_path(payload, target, table_result.sum_values[key])
+
+        validation = validate_template_payload(payload, template.get("fields") or [])
+        if validation.errors:
+            return RuleExtractionResult(
+                complete=False,
+                data=None,
+                template_name=template_name,
+                errors=validation.errors,
+            )
+
+        return RuleExtractionResult(
+            complete=True,
+            data=validation.data,
+            template_name=template_name,
+            errors=[],
+        )
+
+    def _extract_field(
+        self,
+        field: Mapping[str, Any],
+        lines: list[Line],
+        page_width: float,
+        page_height: float,
+        title_line: Line | None,
+    ) -> str | None:
+        use = (field.get("use") or "text").lower()
+        use_text = use in {"text", "both"}
+        use_pos = use in {"pos", "both"}
+        normalize_cfg = NormalizeConfig.from_dict(
+            field.get("normalize"),
+            default_remove_whitespace=True,
+        )
+
+        if use_text:
+            value = self._extract_by_text(field, lines, normalize_cfg)
+            if value:
+                return value
+        if use_pos:
+            value = self._extract_by_pos(
+                field,
+                page_width,
+                page_height,
+                title_line,
+                normalize_cfg,
+                lines,
+            )
+            if value:
+                return value
+        return None
+
+    def _extract_by_text(
+        self,
+        field: Mapping[str, Any],
+        lines: list[Line],
+        normalize_cfg: NormalizeConfig,
+    ) -> str | None:
+        anchor = field.get("anchor_text") or {}
+        pattern = anchor.get("pattern")
+        match_scope = (anchor.get("match_scope") or "line").lower()
+        value_from = anchor.get("value_from") or "capture"
+        if pattern:
+            return _extract_with_pattern(lines, pattern, match_scope, value_from, normalize_cfg)
+
+        anchor_text = anchor.get("text")
+        if not anchor_text:
+            return None
+        anchor_norm = normalize_text(str(anchor_text), normalize_cfg)
+        y_tol = float(anchor.get("y_tol", 6))
+        x_gap = anchor.get("x_gap") or [0, float("inf")]
+        x_min, x_max = float(x_gap[0]), float(x_gap[1])
+
+        for line in lines:
+            items = line.sorted_items()
+            for idx, item in enumerate(items):
+                item_norm = normalize_text(item.text, normalize_cfg)
+                if anchor_norm not in item_norm:
+                    continue
+                tail = _strip_anchor_tail(item.text, anchor_text)
+                if tail:
+                    return tail
+                anchor_bbox = item.bounding_box
+                candidates = []
+                for cand in items[idx + 1 :]:
+                    gap = cand.bounding_box.x1 - anchor_bbox.x2
+                    if gap < x_min or gap > x_max:
+                        continue
+                    if abs(cand.bounding_box.y1 - anchor_bbox.y1) <= y_tol:
+                        candidates.append(cand)
+                if candidates:
+                    candidates.sort(key=lambda c: c.bounding_box.x1)
+                    return candidates[0].text.strip()
+                if anchor.get("fallback_right_neighbor"):
+                    return _nearest_right_neighbor(items, anchor_bbox, y_tol)
+        return None
+
+    def _extract_by_pos(
+        self,
+        field: Mapping[str, Any],
+        page_width: float,
+        page_height: float,
+        title_line: Line | None,
+        normalize_cfg: NormalizeConfig,
+        lines: list[Line],
+    ) -> str | None:
+        anchor_pos = field.get("anchor_pos") or {}
+        region = anchor_pos.get("region") or {}
+        if not region:
+            return None
+        relative_to = (anchor_pos.get("relative_to") or "page").lower()
+
+        x_range = region.get("x") or [0.0, 1.0]
+        y_range = region.get("y") or [0.0, 1.0]
+        x_min, x_max = float(x_range[0]) * page_width, float(x_range[1]) * page_width
+
+        if relative_to == "title_line" and title_line:
+            y_center = title_line.y_center
+            y_min = y_center + float(y_range[0]) * page_height
+            y_max = y_center + float(y_range[1]) * page_height
+        else:
+            y_min = float(y_range[0]) * page_height
+            y_max = float(y_range[1]) * page_height
+
+        items = [item for line in lines for item in line.items]
+        region_items = [
+            item
+            for item in items
+            if x_min <= (item.bounding_box.x1 + item.bounding_box.x2) / 2 <= x_max
+            and y_min <= (item.bounding_box.y1 + item.bounding_box.y2) / 2 <= y_max
+        ]
+        if not region_items:
+            return None
+
+        tokens = to_tokens(region_items)
+        tokens.sort(key=lambda t: t.x1)
+        merge_cfg = MergeTokensConfig.from_dict(field.get("merge_tokens"))
+        if merge_cfg.merge_single_char or merge_cfg.max_x_gap > 0:
+            tokens = merge_tokens(tokens, merge_cfg)
+        raw_text = join_tokens(tokens)
+        value_regex = field.get("value_regex")
+        if value_regex:
+            match = re.search(value_regex, normalize_text(raw_text, normalize_cfg))
+            if not match:
+                return None
+            value = match.group(1) if match.lastindex else match.group(0)
+            return value.strip()
+        if field.get("allow_extra"):
+            return normalize_text(raw_text, normalize_cfg)
+        return raw_text.strip()
+
+    def _extract_table(
+        self,
+        table_cfg: Mapping[str, Any],
+        lines: list[Line],
+    ) -> "_TableResult" | None:
+        if not table_cfg:
+            return None
+        header_labels = table_cfg.get("header") or []
+        header_match = table_cfg.get("header_match") or {}
+        header_norm = NormalizeConfig.from_dict(
+            header_match.get("normalize"),
+            default_remove_whitespace=True,
+        )
+        header_merge = MergeTokensConfig.from_dict(header_match.get("merge_tokens"))
+        min_hit = int(header_match.get("min_hit", len(header_labels)))
+
+        header_line = None
+        header_columns = None
+        for line in lines:
+            match = _match_header_line(line, header_labels, header_norm, header_merge, min_hit)
+            if match:
+                header_line = line
+                header_columns = match
+                break
+
+        if header_line is None or header_columns is None:
+            return None
+
+        columns = _build_columns(header_columns, table_cfg.get("column_map") or {})
+        assign_rule = table_cfg.get("assign_rule") or {}
+        x_tol = float(assign_rule.get("x_tol", 0))
+        if x_tol:
+            for column in columns:
+                column["left"] -= x_tol
+                column["right"] += x_tol
+
+        row_group = table_cfg.get("row_group") or {}
+        row_y_gap = float(row_group.get("y_gap", 8))
+        allow_blank = bool(row_group.get("allow_blank", True))
+        blank_row_max = int(row_group.get("blank_row_max", 3))
+        stop_anchors = table_cfg.get("row_end", {}).get("stop_anchors") or []
+        sum_row_cfg = table_cfg.get("sum_row") or {}
+        sum_required = bool(sum_row_cfg.get("required", False))
+        sum_norm = NormalizeConfig.from_dict(
+            sum_row_cfg.get("normalize"),
+            default_remove_whitespace=True,
+        )
+        sum_merge = MergeTokensConfig.from_dict(sum_row_cfg.get("merge_tokens"))
+        required_fields = set(table_cfg.get("required_fields") or [])
+
+        lines_sorted = sorted(lines, key=lambda line: line.y_center)
+        start_index = lines_sorted.index(header_line) + 1
+        blank_rows = 0
+        line_items: list[dict[str, Any]] = []
+        sum_values: dict[str, float] = {}
+
+        for line in lines_sorted[start_index:]:
+            if line.y_center <= header_line.y_center + row_y_gap:
+                continue
+            line_value = line_text(line, normalize=sum_norm)
+            if _contains_stop_anchor(line_value, stop_anchors, sum_norm):
+                break
+
+            row_cells = _assign_row_cells(line, columns)
+            if not any(row_cells.values()):
+                if not allow_blank:
+                    break
+                blank_rows += 1
+                if blank_rows >= blank_row_max:
+                    break
+                continue
+
+            blank_rows = 0
+            if _is_sum_row(line, sum_row_cfg, sum_norm, sum_merge):
+                amount_val = _parse_number(row_cells.get("amount"))
+                tax_val = _parse_number(row_cells.get("tax_amount"))
+                if amount_val is None and sum_required:
+                    return None
+                if amount_val is not None:
+                    sum_values["amount"] = amount_val
+                if tax_val is not None:
+                    sum_values["tax_amount"] = tax_val
+                if amount_val is not None and tax_val is not None:
+                    sum_values["amount_with_tax"] = amount_val + tax_val
+                elif amount_val is not None:
+                    sum_values["amount_with_tax"] = amount_val
+                break
+
+            line_payload = {key: value for key, value in row_cells.items() if value}
+            if required_fields and not required_fields.issubset(
+                {key for key, value in line_payload.items() if value}
+            ):
+                continue
+            line_items.append(line_payload)
+
+        if sum_required and "amount_with_tax" not in sum_values:
+            return None
+        if not line_items:
+            return None
+
+        return _TableResult(lines=line_items, sum_values=sum_values)
+
+
+@dataclass(frozen=True)
+class _TableResult:
+    lines: list[dict[str, Any]]
+    sum_values: dict[str, float]
+
+
+def _extract_with_pattern(
+    lines: list[Line],
+    pattern: str,
+    match_scope: str,
+    value_from: str,
+    normalize_cfg: NormalizeConfig,
+) -> str | None:
+    for line in lines:
+        items = line.sorted_items()
+        if match_scope == "box":
+            for item in items:
+                match = re.search(pattern, normalize_text(item.text, normalize_cfg))
+                if match:
+                    return _value_from_match(match, value_from)
+        else:
+            line_value = normalize_text(join_tokens(to_tokens(items)), normalize_cfg)
+            match = re.search(pattern, line_value)
+            if match:
+                return _value_from_match(match, value_from)
+    return None
+
+
+def _value_from_match(match: re.Match[str], value_from: str) -> str:
+    if value_from == "capture" and match.lastindex:
+        return match.group(match.lastindex).strip()
+    return match.group(0).strip()
+
+
+def _strip_anchor_tail(raw: str, anchor_text: str) -> str | None:
+    if anchor_text not in raw:
+        return None
+    tail = raw.split(anchor_text, 1)[-1]
+    tail = re.sub(r"^[\u003a\uFF1A]+", "", tail).strip()
+    return tail or None
+
+
+def _nearest_right_neighbor(items: list[OcrItem], anchor_bbox: Any, y_tol: float) -> str | None:
+    candidates = []
+    for item in items:
+        if item.bounding_box.x1 <= anchor_bbox.x2:
+            continue
+        if abs(item.bounding_box.y1 - anchor_bbox.y1) > y_tol:
+            continue
+        candidates.append(item)
+    if not candidates:
+        return None
+    candidates.sort(key=lambda c: c.bounding_box.x1)
+    return candidates[0].text.strip() or None
+
+
+def _best_title_line(lines: list[Line]) -> Line | None:
+    if not lines:
+        return None
+    return min(lines, key=lambda line: line.y_center)
+
+
+def _match_header_line(
+    line: Line,
+    header_labels: list[str],
+    normalize_cfg: NormalizeConfig,
+    merge_cfg: MergeTokensConfig,
+    min_hit: int,
+) -> dict[str, tuple[float, float, float, float]] | None:
+    tokens = to_tokens(line.sorted_items())
+    if merge_cfg.merge_single_char or merge_cfg.max_x_gap > 0:
+        tokens = merge_tokens(tokens, merge_cfg)
+    token_values = [normalize_text(token.text, normalize_cfg) for token in tokens]
+    matches: dict[str, tuple[float, float, float, float]] = {}
+    start_idx = 0
+    for label in header_labels:
+        label_norm = normalize_text(label, normalize_cfg)
+        found = None
+        for i in range(start_idx, len(tokens)):
+            acc = ""
+            for j in range(i, len(tokens)):
+                acc += token_values[j]
+                if acc == label_norm or label_norm in acc:
+                    found = (i, j)
+                    break
+            if found:
+                break
+        if not found:
+            break
+        i, j = found
+        span = tokens[i : j + 1]
+        x1 = min(token.x1 for token in span)
+        y1 = min(token.y1 for token in span)
+        x2 = max(token.x2 for token in span)
+        y2 = max(token.y2 for token in span)
+        matches[label] = (x1, y1, x2, y2)
+        start_idx = j + 1
+
+    if len(matches) < min_hit:
+        return None
+    return matches
+
+
+def _build_columns(
+    header_columns: dict[str, tuple[float, float, float, float]],
+    column_map: Mapping[str, str],
+) -> list[dict[str, Any]]:
+    entries = []
+    for label, (x1, _y1, x2, _y2) in header_columns.items():
+        center = (x1 + x2) / 2
+        entries.append((center, label, column_map.get(label, label), x1, x2))
+    entries.sort(key=lambda e: e[0])
+
+    columns: list[dict[str, Any]] = []
+    for idx, (center, label, field, x1, x2) in enumerate(entries):
+        left = (entries[idx - 1][0] + center) / 2 if idx > 0 else x1
+        right = (center + entries[idx + 1][0]) / 2 if idx < len(entries) - 1 else x2
+        columns.append({"label": label, "field": field, "left": left, "right": right})
+    return columns
+
+
+def _assign_row_cells(line: Line, columns: list[dict[str, Any]]) -> dict[str, str]:
+    cells: dict[str, str] = {column["field"]: "" for column in columns}
+    tokens = to_tokens(line.sorted_items())
+    for token in tokens:
+        for column in columns:
+            if column["left"] <= token.x_center <= column["right"]:
+                cells[column["field"]] += token.text
+                break
+    return {key: value.strip() for key, value in cells.items()}
+
+
+def _is_sum_row(
+    line: Line,
+    sum_cfg: Mapping[str, Any],
+    normalize_cfg: NormalizeConfig,
+    merge_cfg: MergeTokensConfig,
+) -> bool:
+    key = sum_cfg.get("key")
+    if not key:
+        return False
+    key_norm = normalize_text(key, normalize_cfg)
+    tokens = to_tokens(line.sorted_items())
+    if merge_cfg.merge_single_char or merge_cfg.max_x_gap > 0:
+        tokens = merge_tokens(tokens, merge_cfg)
+    for token in tokens:
+        if normalize_text(token.text, normalize_cfg) == key_norm:
+            return True
+    line_value = normalize_text(join_tokens(tokens), normalize_cfg)
+    return key_norm in line_value
+
+
+def _parse_number(value: str | None) -> float | None:
+    if not value:
+        return None
+    cleaned = re.sub(r"[^\d\.-]", "", value)
+    if not cleaned or cleaned in {".", "-", "-.", ".-"}:
+        return None
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
+
+
+def _contains_stop_anchor(value: str, anchors: list[str], normalize_cfg: NormalizeConfig) -> bool:
+    for anchor in anchors:
+        if normalize_text(anchor, normalize_cfg) in value:
+            return True
+    return False
+
+
+def _page_bounds(items: list[OcrItem]) -> tuple[float, float]:
+    max_x = 1.0
+    max_y = 1.0
+    for item in items:
+        max_x = max(max_x, item.bounding_box.x2)
+        max_y = max(max_y, item.bounding_box.y2)
+    return max_x, max_y
+
+
+def _set_path(payload: dict[str, Any], path: str | None, value: Any) -> None:
+    if not path:
+        return
+    parts = path.split(".")
+    cursor = payload
+    for part in parts[:-1]:
+        cursor = cursor.setdefault(part, {})
+    cursor[parts[-1]] = value
