@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any, Mapping
@@ -22,6 +23,7 @@ from app.services.rules.text_normalize import (
     to_tokens,
 )
 
+logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class RuleExtractionResult:
@@ -37,6 +39,7 @@ class InvoiceRuleExtractor:
 
     def extract(self, ocr_result: OcrResult) -> RuleExtractionResult:
         if not ocr_result.items:
+            logger.warning("Rule extraction failed: no_ocr_items")
             return RuleExtractionResult(
                 complete=False,
                 data=None,
@@ -44,6 +47,7 @@ class InvoiceRuleExtractor:
                 errors=["no_ocr_items"],
             )
         if not self._templates:
+            logger.warning("Rule extraction failed: no_templates")
             return RuleExtractionResult(
                 complete=False,
                 data=None,
@@ -53,6 +57,7 @@ class InvoiceRuleExtractor:
 
         match = match_template(ocr_result.items, self._templates)
         if not match:
+            logger.warning("Rule extraction failed: template_not_matched")
             return RuleExtractionResult(
                 complete=False,
                 data=None,
@@ -81,6 +86,7 @@ class InvoiceRuleExtractor:
         table_result = self._extract_table(table_cfg, lines)
         template_name = template.get("name")
         if table_result is None:
+            logger.warning("Rule extraction failed: table_extraction_failed template=%s", template_name)
             return RuleExtractionResult(
                 complete=False,
                 data=None,
@@ -96,6 +102,11 @@ class InvoiceRuleExtractor:
 
         validation = validate_template_payload(payload, template.get("fields") or [])
         if validation.errors:
+            logger.warning(
+                "Rule extraction failed: validation_failed template=%s errors=%s",
+                template_name,
+                validation.errors,
+            )
             return RuleExtractionResult(
                 complete=False,
                 data=None,
@@ -125,6 +136,7 @@ class InvoiceRuleExtractor:
             field.get("normalize"),
             default_remove_whitespace=True,
         )
+        field_name = field.get("name") or field.get("target_path") or "unknown"
 
         if use_text:
             value = self._extract_by_text(
@@ -136,6 +148,7 @@ class InvoiceRuleExtractor:
                 normalize_cfg,
             )
             if value:
+                logger.debug("Rule field extracted: %s method=text", field_name)
                 return value
         if use_pos:
             value = self._extract_by_pos(
@@ -147,7 +160,9 @@ class InvoiceRuleExtractor:
                 lines,
             )
             if value:
+                logger.debug("Rule field extracted: %s method=pos", field_name)
                 return value
+        logger.debug("Rule field missing: %s use=%s", field_name, use)
         return None
 
     def _extract_by_text(
@@ -297,6 +312,7 @@ class InvoiceRuleExtractor:
                 break
 
         if header_line is None or header_columns is None:
+            logger.warning("Rule table extraction failed: header_not_found")
             return None
 
         columns = _build_columns(header_columns, table_cfg.get("column_map") or {})
@@ -348,6 +364,7 @@ class InvoiceRuleExtractor:
                 amount_val = _parse_number(row_cells.get("amount"))
                 tax_val = _parse_number(row_cells.get("tax_amount"))
                 if amount_val is None and sum_required:
+                    logger.warning("Rule table extraction failed: sum_row_missing_amount")
                     return None
                 if amount_val is not None:
                     sum_values["amount"] = amount_val
@@ -367,8 +384,10 @@ class InvoiceRuleExtractor:
             line_items.append(line_payload)
 
         if sum_required and "amount_with_tax" not in sum_values:
+            logger.warning("Rule table extraction failed: sum_row_missing")
             return None
         if not line_items:
+            logger.warning("Rule table extraction failed: no_lines")
             return None
 
         return _TableResult(lines=line_items, sum_values=sum_values)

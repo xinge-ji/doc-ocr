@@ -51,6 +51,12 @@ class InvoiceExtractionPipeline:
         logger.info("? [TIMER] Step 1: OCR finished. Duration: %.4fs", ocr_duration)
 
         rule_result = self._run_rules(ocr_result)
+        if not rule_result.complete:
+            logger.warning(
+                "Rule extraction failed: template=%s errors=%s",
+                rule_result.template_name,
+                rule_result.errors,
+            )
 
         total_duration = time.perf_counter() - start_time
         logger.info(

@@ -316,7 +316,7 @@
       "type": "date",
       "use": "both",
       "anchor_text": {
-        "pattern": "开票日期[:：]?\\s*(\\d{4}[-/.年]\\d{1,2}[-/.月]\\d{1,2})[-/.日]",
+        "pattern": "开票日期[:：]?\\s*(\\d{4}[-/.年]\\d{1,2}[-/.月]\\d{1,2}[-/.日])",
         "match_scope": "line",
         "value_from": "capture"
       },
@@ -365,15 +365,15 @@
       "name": "buyer_name",
       "target_path": "buyer.name",
       "type": "text",
-      "use": "pos",
+      "use": "both",
       "pos_match_scope": "line",
       "pos_line_y_tol": 6,
       "anchor_pos": {
         "relative_to": "page",
         "region": {
           "x": [
-            0.08,
-            0.48
+            0.0,
+            0.5
           ],
           "y": [
             0.12,
@@ -381,7 +381,17 @@
           ]
         }
       },
-      "value_regex": "([\\u4e00-\\u9fff][\\u4e00-\\u9fffA-Za-z0-9（）()·\\-]*)",
+      "anchor_text": {
+        "pattern": "名称[:：]?\\s*([^\\s]+)",
+        "same_line": true,
+        "dir": "right",
+        "x_gap": [
+          5,
+          160
+        ],
+        "y_tol": 6,
+        "fallback_right_neighbor": true
+      },
       "allow_extra": false,
       "normalize": {
         "remove_whitespace": true,
@@ -392,15 +402,15 @@
       "name": "buyer_tax_id",
       "target_path": "buyer.tax_id",
       "type": "text",
-      "use": "pos",
+      "use": "both",
       "pos_match_scope": "line",
       "pos_line_y_tol": 6,
       "anchor_pos": {
         "relative_to": "page",
         "region": {
           "x": [
-            0.08,
-            0.48
+            0.00,
+            0.5
           ],
           "y": [
             0.12,
@@ -408,7 +418,18 @@
           ]
         }
       },
-      "value_regex": "([A-Za-z0-9]{15,20})",
+      "anchor_text": {
+        "pattern": "统一社会信用代码/纳税人识别号[:：]?\\s*([A-Za-z0-9]{12,24})",
+        "same_line": true,
+        "dir": "right",
+        "x_gap": [
+          5,
+          160
+        ],
+        "y_tol": 6,
+        "fallback_right_neighbor": true
+      },
+      "value_regex": "([A-Za-z0-9]{12,24})",
       "allow_extra": false,
       "normalize": {
         "remove_whitespace": true,
@@ -419,14 +440,14 @@
       "name": "seller_name",
       "target_path": "seller.name",
       "type": "text",
-      "use": "pos",
+      "use": "both",
       "pos_match_scope": "line",
       "pos_line_y_tol": 6,
       "anchor_pos": {
         "relative_to": "page",
         "region": {
           "x": [
-            0.55,
+            0.5,
             1.0
           ],
           "y": [
@@ -435,7 +456,17 @@
           ]
         }
       },
-      "value_regex": "([\\u4e00-\\u9fff][\\u4e00-\\u9fffA-Za-z0-9（）()·\\-]*)",
+      "anchor_text": {
+        "pattern": "名称[:：]?\\s*([^\\s]+)",
+        "same_line": true,
+        "dir": "right",
+        "x_gap": [
+          5,
+          160
+        ],
+        "y_tol": 6,
+        "fallback_right_neighbor": true
+      },
       "allow_extra": false,
       "normalize": {
         "remove_whitespace": true,
@@ -446,14 +477,14 @@
       "name": "seller_tax_id",
       "target_path": "seller.tax_id",
       "type": "text",
-      "use": "pos",
+      "use": "both",
       "pos_match_scope": "line",
       "pos_line_y_tol": 6,
       "anchor_pos": {
         "relative_to": "page",
         "region": {
           "x": [
-            0.55,
+            0.5,
             1.0
           ],
           "y": [
@@ -462,7 +493,18 @@
           ]
         }
       },
-      "value_regex": "([A-Za-z0-9]{15,20})",
+      "anchor_text": {
+        "pattern": "统一社会信用代码/纳税人识别号[:：]?\\s*([A-Za-z0-9]{12,24})",
+        "same_line": true,
+        "dir": "right",
+        "x_gap": [
+          5,
+          160
+        ],
+        "y_tol": 6,
+        "fallback_right_neighbor": true
+      },
+      "value_regex": "([A-Za-z0-9]{12,24})",
       "allow_extra": false,
       "normalize": {
         "remove_whitespace": true,
