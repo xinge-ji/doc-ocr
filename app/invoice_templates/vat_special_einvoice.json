@@ -545,6 +545,12 @@
       "税率/征收率": "tax_rate",
       "税额": "tax_amount"
     },
+    "boundary_by_header_end": [
+      "单价",
+      "金额",
+      "税率/征收率",
+      "税额"
+    ],
     "assign_rule": {
       "mode": "by_x",
       "x_tol": 10
@@ -595,6 +601,11 @@
       "merge_tokens": {
         "merge_single_char": true,
         "max_x_gap": 40
+      },
+      "neighbor_search": {
+        "max_lines_up": 2,
+        "max_lines_down": 2,
+        "stop_anchor": "小写"
       },
       "targets": {
         "amount": "total_amount",

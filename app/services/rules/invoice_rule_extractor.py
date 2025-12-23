@@ -335,7 +335,12 @@ class InvoiceRuleExtractor:
                 )
             return None
 
-        columns = _build_columns(header_columns, table_cfg.get("column_map") or {})
+        boundary_by_header_end = set(table_cfg.get("boundary_by_header_end") or [])
+        columns = _build_columns(
+            header_columns,
+            table_cfg.get("column_map") or {},
+            boundary_by_header_end,
+        )
         logger.debug(
             "Rule table header matched labels=%s",
             list(header_columns.keys()),
@@ -369,6 +374,16 @@ class InvoiceRuleExtractor:
             default_remove_whitespace=True,
         )
         sum_merge = MergeTokensConfig.from_dict(sum_row_cfg.get("merge_tokens"))
+        neighbor_cfg = sum_row_cfg.get("neighbor_search") or {}
+        neighbor_up = int(neighbor_cfg.get("max_lines_up", 0))
+        neighbor_down = int(neighbor_cfg.get("max_lines_down", 0))
+        stop_anchor = neighbor_cfg.get("stop_anchor")
+        stop_norm = NormalizeConfig(
+            remove_whitespace=True,
+            remove_brackets=True,
+            fullwidth_to_halfwidth=sum_norm.fullwidth_to_halfwidth,
+            lowercase=sum_norm.lowercase,
+        )
         required_fields = set(table_cfg.get("required_fields") or [])
 
         lines_sorted = sorted(lines, key=lambda line: line.y_center)
@@ -379,7 +394,8 @@ class InvoiceRuleExtractor:
         current_block: list[dict[str, str]] | None = None
         column_fields = [column["field"] for column in columns]
 
-        for line in lines_sorted[start_index:]:
+        for idx in range(start_index, len(lines_sorted)):
+            line = lines_sorted[idx]
             if line.y_center <= header_line.y_center + row_y_gap:
                 continue
             line_value = line_text(line, normalize=sum_norm)
@@ -388,8 +404,27 @@ class InvoiceRuleExtractor:
 
             row_cells = _assign_row_cells(line, columns)
             if _is_sum_row(line, sum_row_cfg, sum_norm, sum_merge):
+                logger.debug(
+                    "Rule table sum row detected y=%.2f cells=%s",
+                    line.y_center,
+                    row_cells,
+                )
                 amount_val = _parse_number(row_cells.get("amount"))
                 tax_val = _parse_number(row_cells.get("tax_amount"))
+                if (amount_val is None or tax_val is None) and (neighbor_up > 0 or neighbor_down > 0):
+                    amount_val, tax_val = _fill_sum_from_neighbors(
+                        lines_sorted,
+                        idx,
+                        start_index,
+                        columns,
+                        sum_norm,
+                        stop_anchor,
+                        stop_norm,
+                        neighbor_up,
+                        neighbor_down,
+                        amount_val,
+                        tax_val,
+                    )
                 if amount_val is None and sum_required:
                     logger.warning("Rule table extraction failed: sum_row_missing_amount")
                     return None
@@ -428,7 +463,11 @@ class InvoiceRuleExtractor:
                         )
                         _append_row_payload(line_items, merged, required_fields)
                     current_block = [row_cells]
-                    logger.debug("Rule table anchor row started y=%.2f", line.y_center)
+                    logger.debug(
+                        "Rule table anchor row started y=%.2f cells=%s",
+                        line.y_center,
+                        row_cells,
+                    )
                 else:
                     if current_block is None:
                         logger.debug("Rule table row skipped before anchor cells=%s", row_cells)
@@ -578,8 +617,10 @@ def _match_header_line(
 def _build_columns(
     header_columns: dict[str, tuple[float, float, float, float]],
     column_map: Mapping[str, str],
+    boundary_by_header_end: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     entries = []
+    boundary_labels = boundary_by_header_end or set()
     for label, (x1, _y1, x2, _y2) in header_columns.items():
         center = (x1 + x2) / 2
         entries.append((center, label, column_map.get(label, label), x1, x2))
@@ -587,8 +628,14 @@ def _build_columns(
 
     columns: list[dict[str, Any]] = []
     for idx, (center, label, field, x1, x2) in enumerate(entries):
-        left = (entries[idx - 1][0] + center) / 2 if idx > 0 else x1
-        right = (center + entries[idx + 1][0]) / 2 if idx < len(entries) - 1 else x2
+        if idx > 0 and label in boundary_labels:
+            left = entries[idx - 1][4]
+        else:
+            left = (entries[idx - 1][0] + center) / 2 if idx > 0 else x1
+        if label in boundary_labels:
+            right = x2
+        else:
+            right = (center + entries[idx + 1][0]) / 2 if idx < len(entries) - 1 else x2
         columns.append({"label": label, "field": field, "left": left, "right": right})
     return columns
 
@@ -653,6 +700,61 @@ def _append_row_payload(
         )
         return
     line_items.append(line_payload)
+
+
+def _fill_sum_from_neighbors(
+    lines: list[Line],
+    idx: int,
+    start_index: int,
+    columns: list[dict[str, Any]],
+    sum_norm: NormalizeConfig,
+    stop_anchor: str | None,
+    stop_norm: NormalizeConfig,
+    max_up: int,
+    max_down: int,
+    amount_val: float | None,
+    tax_val: float | None,
+) -> tuple[float | None, float | None]:
+    if max_down > 0:
+        for offset in range(1, max_down + 1):
+            next_idx = idx + offset
+            if next_idx >= len(lines):
+                break
+            line = lines[next_idx]
+            if stop_anchor:
+                line_value = line_text(line, normalize=stop_norm)
+                if _contains_stop_anchor(line_value, [stop_anchor], stop_norm):
+                    logger.debug(
+                        "Rule table sum neighbor stop at y=%.2f anchor=%s",
+                        line.y_center,
+                        stop_anchor,
+                    )
+                    break
+            row_cells = _assign_row_cells(line, columns)
+            logger.debug("Rule table sum neighbor down y=%.2f cells=%s", line.y_center, row_cells)
+            if amount_val is None:
+                amount_val = _parse_number(row_cells.get("amount"))
+            if tax_val is None:
+                tax_val = _parse_number(row_cells.get("tax_amount"))
+            if amount_val is not None and tax_val is not None:
+                return amount_val, tax_val
+
+    if max_up > 0:
+        for offset in range(1, max_up + 1):
+            prev_idx = idx - offset
+            if prev_idx < start_index:
+                break
+            line = lines[prev_idx]
+            row_cells = _assign_row_cells(line, columns)
+            logger.debug("Rule table sum neighbor up y=%.2f cells=%s", line.y_center, row_cells)
+            if amount_val is None:
+                amount_val = _parse_number(row_cells.get("amount"))
+            if tax_val is None:
+                tax_val = _parse_number(row_cells.get("tax_amount"))
+            if amount_val is not None and tax_val is not None:
+                return amount_val, tax_val
+
+    return amount_val, tax_val
 
 
 def _is_sum_row(
