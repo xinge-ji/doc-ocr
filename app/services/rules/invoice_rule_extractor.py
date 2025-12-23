@@ -362,6 +362,7 @@ class InvoiceRuleExtractor:
         ignore_blank = bool(row_group.get("ignore_blank", False))
         anchor_required = set(row_group.get("anchor_required") or ["name"])
         anchor_any = set(row_group.get("anchor_any") or [])
+        anchor_skip_before_sum = bool(row_group.get("anchor_skip_before_sum", False))
         merge_join_fields = set(row_group.get("merge_join") or ["name", "spec", "unit"])
         merge_first_fields = set(
             row_group.get("merge_first")
@@ -454,6 +455,29 @@ class InvoiceRuleExtractor:
 
                 blank_rows = 0
                 is_anchor = _is_anchor_row(row_cells, anchor_required, anchor_any)
+                if (
+                    is_anchor
+                    and anchor_skip_before_sum
+                    and current_block is not None
+                    and _next_effective_line_is_sum(
+                        lines_sorted,
+                        idx,
+                        start_index,
+                        columns,
+                        sum_row_cfg,
+                        sum_norm,
+                        sum_merge,
+                        stop_anchors,
+                        ignore_blank,
+                    )
+                ):
+                    current_block.append(row_cells)
+                    logger.debug(
+                        "Rule table anchor skipped before sum y=%.2f cells=%s",
+                        line.y_center,
+                        row_cells,
+                    )
+                    continue
                 if is_anchor:
                     if current_block:
                         merged = _merge_row_cells(
@@ -705,6 +729,34 @@ def _append_row_payload(
         )
         return
     line_items.append(line_payload)
+
+
+def _next_effective_line_is_sum(
+    lines: list[Line],
+    idx: int,
+    start_index: int,
+    columns: list[dict[str, Any]],
+    sum_cfg: Mapping[str, Any],
+    sum_norm: NormalizeConfig,
+    sum_merge: MergeTokensConfig,
+    stop_anchors: list[str],
+    ignore_blank: bool,
+) -> bool:
+    for next_idx in range(idx + 1, len(lines)):
+        line = lines[next_idx]
+        line_value = line_text(line, normalize=sum_norm)
+        if _contains_stop_anchor(line_value, stop_anchors, sum_norm):
+            return False
+        if _is_sum_row(line, sum_cfg, sum_norm, sum_merge):
+            return True
+        row_cells = _assign_row_cells(line, columns)
+        if any(row_cells.values()):
+            return False
+        if not ignore_blank:
+            return False
+        if next_idx >= start_index:
+            continue
+    return False
 
 
 def _fill_sum_from_neighbors(

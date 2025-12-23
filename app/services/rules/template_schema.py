@@ -98,9 +98,11 @@ def _coerce_object(
             if prop.get("required", False):
                 errors.append(f"missing_required:{path}.{prop_path}")
             continue
+        prop_required = bool(prop.get("required", False))
         coerced, prop_errors = _coerce_field_value(prop_value, prop, f"{path}.{prop_path}")
         if prop_errors:
-            errors.extend(prop_errors)
+            if prop_required:
+                errors.extend(prop_errors)
             continue
         normalized[prop_path] = coerced
     return normalized, errors

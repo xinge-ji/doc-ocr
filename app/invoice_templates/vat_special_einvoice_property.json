@@ -567,6 +567,7 @@
         "name"
       ],
       "anchor_any": [
+        "spec",
         "unit",
         "quantity",
         "unit_price",
@@ -574,6 +575,7 @@
         "tax_rate",
         "tax_amount"
       ],
+      "anchor_skip_before_sum": true,
       "y_gap": 8,
       "allow_blank": true,
       "blank_row_max": 3,

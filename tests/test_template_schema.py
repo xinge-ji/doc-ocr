@@ -67,3 +67,28 @@ def test_template_schema_reports_missing_required_fields() -> None:
     result = validate_template_payload(payload, fields)
 
     assert result.errors
+
+
+def test_template_schema_ignores_invalid_optional_fields_in_array_items() -> None:
+    fields = [
+        {
+            "name": "lines",
+            "path": "lines",
+            "type": "array",
+            "required": True,
+            "items": {
+                "type": "object",
+                "properties": [
+                    {"name": "name", "path": "name", "type": "string", "required": True},
+                    {"name": "amount", "path": "amount", "type": "number", "required": True},
+                    {"name": "quantity", "path": "quantity", "type": "number", "required": False},
+                ],
+            },
+        }
+    ]
+    payload = {"lines": [{"name": "Item", "amount": "100", "quantity": "1 2"}]}
+
+    result = validate_template_payload(payload, fields)
+
+    assert result.errors == []
+    assert result.data["lines"][0]["amount"] == 100.0
