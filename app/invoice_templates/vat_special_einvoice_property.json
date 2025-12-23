@@ -1,5 +1,5 @@
 {
-  "name": "vat_special_einvoice",
+  "name": "vat_special_einvoice_property",
   "match_rules": {
     "title": {
       "parts": [
@@ -28,6 +28,11 @@
         "text": "开票人",
         "required": true,
         "score": 2
+      },
+      {
+        "text": "产权证书/不动产权证号",
+        "required": true,
+        "score": 3
       }
     ],
     "min_score": 5
@@ -206,14 +211,14 @@
             "name": "spec",
             "path": "spec",
             "type": "string",
-            "description": "规格型号",
+            "description": "产权证书/不动产权证号",
             "required": false
           },
           {
             "name": "unit",
             "path": "unit",
             "type": "string",
-            "description": "单位",
+            "description": "面积单位",
             "required": false
           },
           {
@@ -321,15 +326,15 @@
         "value_from": "capture"
       },
       "anchor_pos": {
-        "relative_to": "page",
+        "relative_to": "title_line",
         "region": {
           "x": [
             0.55,
             1.0
           ],
           "y": [
-            0.0,
-            0.2
+            -0.02,
+            0.02
           ]
         }
       },
@@ -419,7 +424,7 @@
         }
       },
       "anchor_text": {
-        "pattern": "统一社会信用代码/纳税人识别号[:：]?\\s*([A-Za-z0-9]{12,24})",
+        "pattern": "统一社会信用人代码/纳税人识别号[:：]?\\s*([A-Za-z0-9]{12,24})",
         "same_line": true,
         "dir": "right",
         "x_gap": [
@@ -494,7 +499,7 @@
         }
       },
       "anchor_text": {
-        "pattern": "统一社会信用代码/纳税人识别号[:：]?\\s*([A-Za-z0-9]{12,24})",
+        "pattern": "统一社会信用人代码/纳税人识别号[:：]?\\s*([A-Za-z0-9]{12,24})",
         "same_line": true,
         "dir": "right",
         "x_gap": [
@@ -515,8 +520,8 @@
   "table": {
     "header": [
       "项目名称",
-      "规格型号",
-      "单位",
+      "产权证书/不动产权证号",
+      "面积单位",
       "数量",
       "单价",
       "金额",
@@ -537,8 +542,8 @@
     },
     "column_map": {
       "项目名称": "name",
-      "规格型号": "spec",
-      "单位": "unit",
+      "产权证书/不动产权证号": "spec",
+      "面积单位": "unit",
       "数量": "quantity",
       "单价": "unit_price",
       "金额": "amount",
