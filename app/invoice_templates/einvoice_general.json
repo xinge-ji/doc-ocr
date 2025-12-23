@@ -32,7 +32,7 @@
         "min_score": 5
     },
     "fixed_fields": {
-        "invoice_type": "电子发票-增值税专用发票"
+        "invoice_type": "电子发票-普通发票"
     },
     "fields": [
         {
@@ -43,7 +43,7 @@
             "required": true,
             "constraints": {
                 "enum": [
-                    "电子发票-增值税专用发票"
+                    "电子发票-普通发票"
                 ]
             }
         },

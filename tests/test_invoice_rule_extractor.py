@@ -145,6 +145,48 @@ def test_rule_extractor_splits_buyer_seller_by_region() -> None:
     assert result.data["seller"]["tax_id"] == "91350104MAD896RR6Y"
 
 
+def test_rule_extractor_allows_first_row_name_only_anchor() -> None:
+    items = [
+        _item("电子发票", 100, 10, 160, 25),
+        _item("（", 170, 10, 175, 25),
+        _item("增值税", 180, 10, 220, 25),
+        _item("专用发票", 230, 10, 280, 25),
+        _item("）", 285, 10, 290, 25),
+        _item("发票号码", 350, 10, 410, 25),
+        _item("12345678", 420, 10, 470, 25),
+        _item("开票日期", 500, 10, 560, 25),
+        _item("2024-01-02", 570, 10, 650, 25),
+        _item("项目名称", 50, 200, 110, 215),
+        _item("规格型号", 120, 200, 180, 215),
+        _item("单位", 190, 200, 220, 215),
+        _item("数量", 230, 200, 260, 215),
+        _item("单价", 270, 200, 310, 215),
+        _item("金额", 320, 200, 360, 215),
+        _item("税率/征收", 370, 200, 430, 215),
+        _item("率", 432, 200, 440, 215),
+        _item("税额", 450, 200, 490, 215),
+        _item("服务费", 50, 230, 110, 245),
+        _item("100.00", 320, 250, 360, 265),
+        _item("13%", 370, 250, 400, 265),
+        _item("13.00", 450, 250, 480, 265),
+        _item("合", 50, 270, 60, 285),
+        _item("计", 70, 270, 80, 285),
+        _item("100.00", 320, 270, 360, 285),
+        _item("13.00", 450, 270, 480, 285),
+        _item("开票人", 400, 900, 440, 915),
+        _item("张三", 450, 900, 480, 915),
+    ]
+    ocr_result = OcrResult(items=items)
+    extractor = InvoiceRuleExtractor()
+
+    result = extractor.extract(ocr_result)
+
+    assert result.complete is True
+    assert result.data is not None
+    assert result.data["lines"][0]["name"] == "服务费"
+    assert result.data["lines"][0]["amount"] == 100.0
+
+
 def test_rule_extractor_requires_sum_row() -> None:
     ocr_result = OcrResult(items=_build_items(include_sum_row=False))
     extractor = InvoiceRuleExtractor()

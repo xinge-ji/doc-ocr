@@ -26,6 +26,7 @@ uv run uvicorn app.main:app --reload
 - Pipeline flow is OCR -> rules; output fields are defined by the matched template.
 - When rule extraction is incomplete, the API returns `422` with rule errors.
 - Template `fields` define types, descriptions, and constraints used during validation.
+- Table extraction will treat the first data row with only required fields as an anchor and merge following rows.
 
 ## Test
 

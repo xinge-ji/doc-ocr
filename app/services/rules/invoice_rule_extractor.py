@@ -396,6 +396,7 @@ class InvoiceRuleExtractor:
         sum_values: dict[str, float] = {}
         current_block: list[dict[str, str]] | None = None
         column_fields = [column["field"] for column in columns]
+        first_required_row_seen = False
 
         for idx in range(start_index, len(lines_sorted)):
             line = lines_sorted[idx]
@@ -454,7 +455,27 @@ class InvoiceRuleExtractor:
                     continue
 
                 blank_rows = 0
+                required_fields_present = bool(anchor_required) and all(
+                    row_cells.get(field) for field in anchor_required
+                )
+                any_hit = True if not anchor_any else any(
+                    row_cells.get(field) for field in anchor_any
+                )
                 is_anchor = _is_anchor_row(row_cells, anchor_required, anchor_any)
+                if (
+                    not is_anchor
+                    and not first_required_row_seen
+                    and required_fields_present
+                    and not any_hit
+                ):
+                    is_anchor = True
+                    logger.debug(
+                        "Rule table first-row anchor fallback y=%.2f cells=%s",
+                        line.y_center,
+                        row_cells,
+                    )
+                if required_fields_present and not first_required_row_seen:
+                    first_required_row_seen = True
                 if (
                     is_anchor
                     and anchor_skip_before_sum
