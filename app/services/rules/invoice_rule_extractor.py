@@ -336,10 +336,12 @@ class InvoiceRuleExtractor:
             return None
 
         boundary_by_header_end = set(table_cfg.get("boundary_by_header_end") or [])
+        first_column_left = table_cfg.get("first_column_left")
         columns = _build_columns(
             header_columns,
             table_cfg.get("column_map") or {},
             boundary_by_header_end,
+            first_column_left,
         )
         logger.debug(
             "Rule table header matched labels=%s",
@@ -618,6 +620,7 @@ def _build_columns(
     header_columns: dict[str, tuple[float, float, float, float]],
     column_map: Mapping[str, str],
     boundary_by_header_end: set[str] | None = None,
+    first_column_left: float | None = None,
 ) -> list[dict[str, Any]]:
     entries = []
     boundary_labels = boundary_by_header_end or set()
@@ -636,6 +639,8 @@ def _build_columns(
             right = x2
         else:
             right = (center + entries[idx + 1][0]) / 2 if idx < len(entries) - 1 else x2
+        if idx == 0 and first_column_left is not None:
+            left = float(first_column_left)
         columns.append({"label": label, "field": field, "left": left, "right": right})
     return columns
 

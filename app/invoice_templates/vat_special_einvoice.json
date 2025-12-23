@@ -545,6 +545,7 @@
       "税率/征收率": "tax_rate",
       "税额": "tax_amount"
     },
+    "first_column_left": 0.0,
     "boundary_by_header_end": [
       "单价",
       "金额",
