@@ -15,4 +15,5 @@
 *.egg-info
 *.log
 .env*
-
+/.uv*
+/debug
